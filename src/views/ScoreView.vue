@@ -146,13 +146,13 @@
                 <span>乐谱渲染</span>
                 <div class="score-controls">
                   <el-button-group>
-                    <el-button size="small" @click="zoomIn">
+                    <el-button size="small" @click="handleZoomIn">
                       <el-icon><zoom-in /></el-icon>
                     </el-button>
-                    <el-button size="small" @click="zoomOut">
+                    <el-button size="small" @click="handleZoomOut">
                       <el-icon><zoom-out /></el-icon>
                     </el-button>
-                    <el-button size="small" @click="resetZoom">
+                    <el-button size="small" @click="handleResetZoom">
                       <el-icon><refresh /></el-icon>
                     </el-button>
                   </el-button-group>
@@ -283,17 +283,17 @@ const handleLayoutChange = () => {
 }
 
 // 缩放控制
-const zoomIn = () => {
+const handleZoomIn = () => {
   zoomLevel.value = Math.min(200, zoomLevel.value + 10)
   updateZoom()
 }
 
-const zoomOut = () => {
+const handleZoomOut = () => {
   zoomLevel.value = Math.max(50, zoomLevel.value - 10)
   updateZoom()
 }
 
-const resetZoom = () => {
+const handleResetZoom = () => {
   zoomLevel.value = 100
   updateZoom()
 }

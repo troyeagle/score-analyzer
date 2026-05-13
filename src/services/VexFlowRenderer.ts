@@ -121,19 +121,29 @@ export class VexFlowRenderer {
   ): number {
     if (!this.context) return startY
     
-    const staveWidth = totalWidth / (endMeasure - startMeasure)
-    let currentX = marginLeft
-    
     // 创建五线谱
-    const stave = new Stave(currentX, startY, totalWidth)
+    const stave = new Stave(marginLeft, startY, totalWidth)
     
-    // 添加谱号
+    // 添加谱号和调号
     const firstMeasure = part.measures[0]
-    if (firstMeasure) {
-      const clef = this.getClefName(firstMeasure.attributes.clefs[0])
-      stave.addClef(clef)
-      stave.addKeySignature(firstMeasure.attributes.key)
-      stave.addTimeSignature(firstMeasure.attributes.time)
+    if (firstMeasure && firstMeasure.attributes) {
+      // 获取谱号
+      const clef = firstMeasure.attributes.clefs?.[0]
+      const clefName = this.getClefName(clef)
+      stave.addClef(clefName)
+      
+      // 添加调号
+      if (firstMeasure.attributes.key) {
+        stave.addKeySignature(firstMeasure.attributes.key)
+      }
+      
+      // 添加拍号
+      if (firstMeasure.attributes.time) {
+        stave.addTimeSignature(firstMeasure.attributes.time)
+      }
+    } else {
+      // 默认谱号
+      stave.addClef('treble')
     }
     
     stave.setContext(this.context)
@@ -144,14 +154,17 @@ export class VexFlowRenderer {
     
     for (let i = startMeasure; i < endMeasure; i++) {
       const measure = part.measures[i]
-      if (!measure) continue
+      if (!measure || !measure.voices) continue
       
-      measure.voices.forEach((voice, voiceId) => {
+      measure.voices.forEach((voice) => {
+        if (!voice.notes || voice.notes.length === 0) return
+        
         const vexNotes = this.createVexFlowNotes(voice.notes)
         if (vexNotes.length > 0) {
+          const timeSignature = measure.attributes?.time || '4/4'
           const vexVoice = new Voice({
-            num_beats: this.getBeatsFromTimeSignature(measure.attributes.time),
-            beat_value: this.getBeatValueFromTimeSignature(measure.attributes.time)
+            num_beats: this.getBeatsFromTimeSignature(timeSignature),
+            beat_value: this.getBeatValueFromTimeSignature(timeSignature)
           })
           vexVoice.setStrict(false)
           vexVoice.addTickables(vexNotes)
@@ -161,13 +174,17 @@ export class VexFlowRenderer {
     }
     
     if (allVoices.length > 0) {
-      const formatter = new Formatter()
-      formatter.joinVoices(allVoices)
-      formatter.format(allVoices, totalWidth - 50)
-      
-      allVoices.forEach(voice => {
-        voice.draw(this.context, stave)
-      })
+      try {
+        const formatter = new Formatter()
+        formatter.joinVoices(allVoices)
+        formatter.format(allVoices, totalWidth - 50)
+        
+        allVoices.forEach(voice => {
+          voice.draw(this.context, stave)
+        })
+      } catch (error) {
+        console.warn('格式化或渲染音符失败:', error)
+      }
     }
     
     return startY + 100
@@ -189,16 +206,21 @@ export class VexFlowRenderer {
     
     // 获取谱号信息
     const firstMeasure = part.measures[0]
-    const trebleClef = firstMeasure?.attributes.clefs.find(c => c.sign === 'G') || { sign: 'G', line: 2, number: 1 }
-    const bassClef = firstMeasure?.attributes.clefs.find(c => c.sign === 'F') || { sign: 'F', line: 4, number: 2 }
+    const clefs = firstMeasure?.attributes?.clefs || []
+    const trebleClef = clefs.find(c => c.sign === 'G') || { sign: 'G', line: 2, number: 1 }
+    const bassClef = clefs.find(c => c.sign === 'F') || { sign: 'F', line: 4, number: 2 }
     
     // 高音谱表
     const trebleY = startY
     const trebleStave = new Stave(marginLeft, trebleY, totalWidth)
     trebleStave.addClef(this.getClefName(trebleClef))
-    if (firstMeasure) {
-      trebleStave.addKeySignature(firstMeasure.attributes.key)
-      trebleStave.addTimeSignature(firstMeasure.attributes.time)
+    if (firstMeasure?.attributes) {
+      if (firstMeasure.attributes.key) {
+        trebleStave.addKeySignature(firstMeasure.attributes.key)
+      }
+      if (firstMeasure.attributes.time) {
+        trebleStave.addTimeSignature(firstMeasure.attributes.time)
+      }
     }
     trebleStave.setContext(this.context)
     trebleStave.draw()
@@ -207,7 +229,7 @@ export class VexFlowRenderer {
     const bassY = trebleY + staffSpacing
     const bassStave = new Stave(marginLeft, bassY, totalWidth)
     bassStave.addClef(this.getClefName(bassClef))
-    if (firstMeasure) {
+    if (firstMeasure?.attributes?.key) {
       bassStave.addKeySignature(firstMeasure.attributes.key)
     }
     bassStave.setContext(this.context)
@@ -222,23 +244,26 @@ export class VexFlowRenderer {
     
     for (let i = startMeasure; i < endMeasure; i++) {
       const measure = part.measures[i]
-      if (!measure) continue
+      if (!measure || !measure.voices) continue
       
-      measure.voices.forEach((voice, voiceId) => {
+      measure.voices.forEach((voice) => {
+        if (!voice.notes || voice.notes.length === 0) return
+        
         const vexNotes = this.createVexFlowNotes(voice.notes)
         if (vexNotes.length > 0) {
+          const timeSignature = measure.attributes?.time || '4/4'
           const vexVoice = new Voice({
-            num_beats: this.getBeatsFromTimeSignature(measure.attributes.time),
-            beat_value: this.getBeatValueFromTimeSignature(measure.attributes.time)
+            num_beats: this.getBeatsFromTimeSignature(timeSignature),
+            beat_value: this.getBeatValueFromTimeSignature(timeSignature)
           })
           vexVoice.setStrict(false)
           vexVoice.addTickables(vexNotes)
           
           // 根据 staff 分配到高音或低音谱表
-          if (voice.staff === 1) {
-            trebleVoices.push(vexVoice)
-          } else {
+          if (voice.staff === 2) {
             bassVoices.push(vexVoice)
+          } else {
+            trebleVoices.push(vexVoice)
           }
         }
       })
@@ -246,22 +271,30 @@ export class VexFlowRenderer {
     
     // 格式化并渲染高音谱表
     if (trebleVoices.length > 0) {
-      const formatter = new Formatter()
-      formatter.joinVoices(trebleVoices)
-      formatter.format(trebleVoices, totalWidth - 50)
-      trebleVoices.forEach(voice => {
-        voice.draw(this.context, trebleStave)
-      })
+      try {
+        const formatter = new Formatter()
+        formatter.joinVoices(trebleVoices)
+        formatter.format(trebleVoices, totalWidth - 50)
+        trebleVoices.forEach(voice => {
+          voice.draw(this.context, trebleStave)
+        })
+      } catch (error) {
+        console.warn('渲染高音谱表失败:', error)
+      }
     }
     
     // 格式化并渲染低音谱表
     if (bassVoices.length > 0) {
-      const formatter = new Formatter()
-      formatter.joinVoices(bassVoices)
-      formatter.format(bassVoices, totalWidth - 50)
-      bassVoices.forEach(voice => {
-        voice.draw(this.context, bassStave)
-      })
+      try {
+        const formatter = new Formatter()
+        formatter.joinVoices(bassVoices)
+        formatter.format(bassVoices, totalWidth - 50)
+        bassVoices.forEach(voice => {
+          voice.draw(this.context, bassStave)
+        })
+      } catch (error) {
+        console.warn('渲染低音谱表失败:', error)
+      }
     }
     
     return bassY + 100
@@ -320,12 +353,44 @@ export class VexFlowRenderer {
    * 创建单个 VexFlow 音符
    */
   private createSingleVexFlowNote(note: Note): StaveNote | null {
-    if (!note.pitch) return null
+    if (!note || !note.pitch) return null
     
     const pitchMatch = note.pitch.match(/^([A-G])(b|bb|#|x)?(\d)$/)
     if (!pitchMatch) {
-      console.warn(`无法解析音高: ${note.pitch}`)
-      return null
+      // 尝试解析简化的音高格式
+      const simpleMatch = note.pitch.match(/^([A-G])(\d)$/)
+      if (!simpleMatch) {
+        console.warn(`无法解析音高: ${note.pitch}`)
+        return null
+      }
+      
+      const step = simpleMatch[1].toLowerCase()
+      const octave = simpleMatch[2]
+      const duration = this.mapNoteDuration(note.type)
+      
+      if (!duration) {
+        console.warn(`无法映射时值: ${note.type}`)
+        return null
+      }
+      
+      try {
+        const vexNote = new StaveNote({
+          keys: [`${step}/${octave}`],
+          duration,
+          stem_direction: note.stem === 'down' ? -1 : 1
+        })
+        
+        if (note.dots > 0) {
+          for (let i = 0; i < note.dots; i++) {
+            vexNote.addModifier(new Dot())
+          }
+        }
+        
+        return vexNote
+      } catch (error) {
+        console.warn(`创建音符失败: ${note.pitch}`, error)
+        return null
+      }
     }
     
     const step = pitchMatch[1].toLowerCase()
@@ -341,37 +406,39 @@ export class VexFlowRenderer {
     // 构建 key 字符串
     let key = `${step}${accidental}/${octave}`
     
-    // 如果是和弦，需要添加多个 key
-    const keys = [key]
-    
-    const vexNote = new StaveNote({
-      keys,
-      duration,
-      stem_direction: note.stem === 'down' ? -1 : 1
-    })
-    
-    // 添加变音记号
-    if (accidental) {
-      const accidentalMap: Record<string, string> = {
-        'b': 'b',
-        'bb': 'bb',
-        '#': '#',
-        'x': '##'
+    try {
+      const vexNote = new StaveNote({
+        keys: [key],
+        duration,
+        stem_direction: note.stem === 'down' ? -1 : 1
+      })
+      
+      // 添加变音记号
+      if (accidental) {
+        const accidentalMap: Record<string, string> = {
+          'b': 'b',
+          'bb': 'bb',
+          '#': '#',
+          'x': '##'
+        }
+        const vexAccidental = accidentalMap[accidental]
+        if (vexAccidental) {
+          vexNote.addModifier(new Accidental(vexAccidental))
+        }
       }
-      const vexAccidental = accidentalMap[accidental]
-      if (vexAccidental) {
-        vexNote.addModifier(new Accidental(vexAccidental))
+      
+      // 添加附点
+      if (note.dots > 0) {
+        for (let i = 0; i < note.dots; i++) {
+          vexNote.addModifier(new Dot())
+        }
       }
+      
+      return vexNote
+    } catch (error) {
+      console.warn(`创建音符失败: ${note.pitch}`, error)
+      return null
     }
-    
-    // 添加附点
-    if (note.dots > 0) {
-      for (let i = 0; i < note.dots; i++) {
-        vexNote.addModifier(new Dot())
-      }
-    }
-    
-    return vexNote
   }
 
   /**
@@ -394,7 +461,11 @@ export class VexFlowRenderer {
   /**
    * 获取谱号名称
    */
-  private getClefName(clef: Clef): string {
+  private getClefName(clef: Clef | undefined): string {
+    if (!clef || !clef.sign) {
+      return 'treble' // 默认高音谱号
+    }
+    
     const clefMap: Record<string, string> = {
       'G': 'treble',
       'F': 'bass',
@@ -402,18 +473,7 @@ export class VexFlowRenderer {
       'percussion': 'percussion'
     }
     
-    let clefName = clefMap[clef.sign] || 'treble'
-    
-    // 处理高八度/低八度谱号
-    if (clef.clefOctaveChange) {
-      if (clef.clefOctaveChange === -1) {
-        clefName += '8vb'
-      } else if (clef.clefOctaveChange === 1) {
-        clefName += '8va'
-      }
-    }
-    
-    return clefName
+    return clefMap[clef.sign] || 'treble'
   }
 
   /**
