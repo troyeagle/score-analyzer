@@ -35,7 +35,39 @@
                 <p><strong>作曲家：</strong>{{ scoreStore.scoreComposer }}</p>
                 <p><strong>调号：</strong>{{ scoreStore.metadata?.keySignature }}</p>
                 <p><strong>拍号：</strong>{{ scoreStore.metadata?.timeSignature }}</p>
+                <p><strong>声部数：</strong>{{ scoreStore.totalParts }}</p>
                 <p><strong>小节数：</strong>{{ scoreStore.totalMeasures }}</p>
+              </div>
+            </div>
+          </el-card>
+          
+          <el-card class="control-card">
+            <template #header>
+              <div class="card-header">
+                <span>声部选择</span>
+                <div>
+                  <el-button size="small" @click="scoreStore.selectAllParts">全选</el-button>
+                  <el-button size="small" @click="scoreStore.deselectAllParts">取消</el-button>
+                </div>
+              </div>
+            </template>
+            <div class="control-content">
+              <div class="part-list">
+                <div 
+                  v-for="part in scoreStore.parts" 
+                  :key="part.id" 
+                  class="part-item"
+                  :class="{ selected: scoreStore.selectedPartIds.includes(part.id) }"
+                >
+                  <el-checkbox 
+                    :model-value="scoreStore.selectedPartIds.includes(part.id)"
+                    @change="scoreStore.togglePartSelection(part.id)"
+                  >
+                    <span class="part-name">{{ part.name }}</span>
+                    <el-tag size="small" v-if="part.staves > 1">大谱表</el-tag>
+                    <el-tag size="small" type="info">{{ part.measures.length }}小节</el-tag>
+                  </el-checkbox>
+                </div>
               </div>
             </div>
           </el-card>
@@ -90,22 +122,11 @@
                   />
                 </div>
                 <div class="control-item">
-                  <span>系统间距：</span>
+                  <span>谱表间距：</span>
                   <el-slider 
-                    v-model="layoutConfig.systemSpacing" 
-                    :min="50" 
-                    :max="150" 
-                    :step="10"
-                    size="small"
-                    @change="handleLayoutChange"
-                  />
-                </div>
-                <div class="control-item">
-                  <span>小节内边距：</span>
-                  <el-slider 
-                    v-model="layoutConfig.measurePadding" 
-                    :min="5" 
-                    :max="30" 
+                    v-model="layoutConfig.staffSpacing" 
+                    :min="30" 
+                    :max="100" 
                     :step="5"
                     size="small"
                     @change="handleLayoutChange"
@@ -164,7 +185,6 @@ import { useScoreStore } from '../stores/score'
 import { musicXMLParser } from '../services/MusicXMLParser'
 import { layoutEngine } from '../services/LayoutEngine'
 import { vexFlowRenderer } from '../services/VexFlowRenderer'
-import { annotationEngine } from '../services/AnnotationEngine'
 import type { LayoutConfig } from '../types'
 
 const scoreStore = useScoreStore()
@@ -184,7 +204,8 @@ const layoutConfig = reactive<LayoutConfig>({
   marginRight: 40,
   staveSpacing: 80,
   systemSpacing: 100,
-  measurePadding: 10
+  measurePadding: 10,
+  staffSpacing: 60
 })
 
 // 处理文件上传
@@ -194,19 +215,18 @@ const handleFileChange = async (file: UploadFile) => {
   try {
     console.log('开始解析文件:', file.name)
     
-    // 解析MusicXML文件
     const parseResult = await musicXMLParser.parse(file.raw)
-    console.log('解析结果:', parseResult)
+    console.log('解析结果:', {
+      parts: parseResult.parts.length,
+      partNames: parseResult.parts.map(p => p.name),
+      measuresPerPart: parseResult.parts.map(p => p.measures.length)
+    })
     
-    // 加载到store
     await scoreStore.loadScore(parseResult)
-    
-    // 渲染乐谱
     await renderScore()
     
   } catch (error) {
     console.error('文件解析失败:', error)
-    // 显示错误提示
   }
 }
 
@@ -220,33 +240,8 @@ const renderScore = async () => {
     // 初始化VexFlow渲染器
     vexFlowRenderer.initialize(scoreOutput.value, layoutConfig.pageWidth, layoutConfig.pageHeight)
     
-    // 计算布局
-    const staveLayouts = layoutEngine.layout({
-      metadata: scoreStore.metadata!,
-      parts: scoreStore.parts,
-      measures: scoreStore.measures,
-      notes: scoreStore.notes,
-      annotations: scoreStore.annotations
-    })
-    
-    // 渲染乐谱
-    vexFlowRenderer.render({
-      metadata: scoreStore.metadata!,
-      parts: scoreStore.parts,
-      measures: scoreStore.measures,
-      notes: scoreStore.notes,
-      annotations: scoreStore.annotations
-    }, staveLayouts)
-    
-    // 初始化标注引擎
-    if (scoreOutput.value) {
-      annotationEngine.initialize(scoreOutput.value)
-      
-      // 添加标注图层
-      scoreStore.layers.forEach(layer => {
-        annotationEngine.addLayer(layer)
-      })
-    }
+    // 渲染选中的声部
+    vexFlowRenderer.renderParts(scoreStore.selectedParts, layoutConfig)
     
   } catch (error) {
     console.error('渲染失败:', error)
@@ -258,18 +253,15 @@ const renderScore = async () => {
 // 处理图层可见性变化
 const handleLayerVisibilityChange = (layerId: string) => {
   scoreStore.toggleLayerVisibility(layerId)
-  annotationEngine.toggleLayer(layerId, scoreStore.layers.find(l => l.id === layerId)?.visible || false)
 }
 
 // 处理图层透明度变化
 const handleLayerOpacityChange = (layerId: string, opacity: number) => {
   scoreStore.setLayerOpacity(layerId, opacity)
-  annotationEngine.setLayerOpacity(layerId, opacity)
 }
 
 // 处理难度分级变化
 const handleLevelChange = (level: string) => {
-  // 根据难度级别显示/隐藏图层
   const levelLayers: Record<string, string[]> = {
     basic: ['structural'],
     advanced: ['structural', 'motivic', 'harmonic'],
@@ -279,9 +271,7 @@ const handleLevelChange = (level: string) => {
   const visibleLayers = levelLayers[level] || []
   
   scoreStore.layers.forEach(layer => {
-    const shouldShow = visibleLayers.includes(layer.id)
-    layer.visible = shouldShow
-    annotationEngine.toggleLayer(layer.id, shouldShow)
+    layer.visible = visibleLayers.includes(layer.id)
   })
 }
 
@@ -317,7 +307,6 @@ const updateZoom = () => {
 
 // 导出PDF
 const exportToPDF = () => {
-  // TODO: 实现PDF导出
   console.log('导出PDF')
 }
 
@@ -326,9 +315,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  // 清理
   vexFlowRenderer.destroy()
-  annotationEngine.destroy()
 })
 </script>
 
@@ -379,6 +366,30 @@ onUnmounted(() => {
 
 .control-content {
   padding: 10px 0;
+}
+
+.part-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.part-item {
+  padding: 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  transition: background-color 0.2s;
+}
+
+.part-item:hover {
+  background-color: #f5f7fa;
+}
+
+.part-item.selected {
+  background-color: #ecf5ff;
+}
+
+.part-name {
+  font-weight: 500;
 }
 
 .layer-controls, .level-controls, .layout-controls {

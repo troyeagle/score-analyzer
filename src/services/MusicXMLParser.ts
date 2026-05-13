@@ -1,11 +1,21 @@
 import type { 
   MusicXMLParseResult, 
   ScoreMetadata, 
+  Credit,
   Part, 
+  PartInfo,
+  PartGroup,
   Measure, 
+  Voice,
   Note, 
-  Annotation,
-  MeasureAttributes
+  Lyric,
+  Notation,
+  MeasureAttributes,
+  Clef,
+  Direction,
+  Barline,
+  PrintLayout,
+  Transpose
 } from '../types'
 
 export class MusicXMLParser {
@@ -21,19 +31,7 @@ export class MusicXMLParser {
    */
   async parse(file: File): Promise<MusicXMLParseResult> {
     const content = await this.readFileContent(file)
-    this.doc = this.parser.parseFromString(content, 'text/xml')
-    
-    if (!this.validate(this.doc)) {
-      throw new Error('无效的MusicXML文件格式')
-    }
-
-    return {
-      metadata: this.extractMetadata(),
-      parts: this.extractParts(),
-      measures: this.extractMeasures(),
-      notes: this.extractNotes(),
-      annotations: this.extractAnnotations()
-    }
+    return this.parseFromString(content)
   }
 
   /**
@@ -46,12 +44,12 @@ export class MusicXMLParser {
       throw new Error('无效的MusicXML文件格式')
     }
 
+    const metadata = this.extractMetadata()
+    const parts = this.extractParts()
+
     return {
-      metadata: this.extractMetadata(),
-      parts: this.extractParts(),
-      measures: this.extractMeasures(),
-      notes: this.extractNotes(),
-      annotations: this.extractAnnotations()
+      metadata,
+      parts
     }
   }
 
@@ -78,20 +76,12 @@ export class MusicXMLParser {
    * 验证MusicXML格式
    */
   validate(xml: Document): boolean {
-    // 检查是否为有效的XML
     if (xml.querySelector('parsererror')) {
       return false
     }
-
-    // 检查是否包含必要的MusicXML元素
     const scorePartwise = xml.querySelector('score-partwise')
     const scoreTimewise = xml.querySelector('score-timewise')
-    
-    if (!scorePartwise && !scoreTimewise) {
-      return false
-    }
-
-    return true
+    return !!(scorePartwise || scoreTimewise)
   }
 
   /**
@@ -105,13 +95,14 @@ export class MusicXMLParser {
     const metadata: ScoreMetadata = {
       title: '',
       composer: '',
-      keySignature: '',
-      timeSignature: '',
-      tempo: 120
+      keySignature: 'C',
+      timeSignature: '4/4',
+      tempo: 120,
+      credits: []
     }
 
     // 提取标题
-    const workTitle = this.doc.querySelector('work-title')
+    const workTitle = this.doc.querySelector('work > work-title')
     const movementTitle = this.doc.querySelector('movement-title')
     metadata.title = workTitle?.textContent || movementTitle?.textContent || '未知作品'
 
@@ -119,41 +110,95 @@ export class MusicXMLParser {
     const creator = this.doc.querySelector('creator[type="composer"]')
     metadata.composer = creator?.textContent || '未知作曲家'
 
-    // 提取调号
-    const key = this.doc.querySelector('key')
-    if (key) {
-      const keyStep = key.querySelector('fifths')
-      const keyMode = key.querySelector('mode')
-      if (keyStep) {
-        const fifths = parseInt(keyStep.textContent || '0')
-        metadata.keySignature = this.fifthsToKeySignature(fifths, keyMode?.textContent || 'major')
-      }
-    }
-
-    // 提取拍号
-    const time = this.doc.querySelector('time')
-    if (time) {
-      const beats = time.querySelector('beats')
-      const beatType = time.querySelector('beat-type')
-      if (beats && beatType) {
-        metadata.timeSignature = `${beats.textContent}/${beatType.textContent}`
+    // 提取调号（从第一个 part 的第一个 measure）
+    const firstPart = this.doc.querySelector('part')
+    if (firstPart) {
+      const firstMeasure = firstPart.querySelector('measure')
+      if (firstMeasure) {
+        const attributes = firstMeasure.querySelector('attributes')
+        if (attributes) {
+          const keyElement = attributes.querySelector('key')
+          if (keyElement) {
+            const fifths = parseInt(keyElement.querySelector('fifths')?.textContent || '0')
+            const mode = keyElement.querySelector('mode')?.textContent || 'major'
+            metadata.keySignature = this.fifthsToKeySignature(fifths, mode)
+          }
+          const timeElement = attributes.querySelector('time')
+          if (timeElement) {
+            const beats = timeElement.querySelector('beats')?.textContent || '4'
+            const beatType = timeElement.querySelector('beat-type')?.textContent || '4'
+            metadata.timeSignature = `${beats}/${beatType}`
+          }
+        }
       }
     }
 
     // 提取速度
-    const direction = this.doc.querySelector('direction[tempo]')
-    if (direction) {
-      const tempo = direction.querySelector('sound[tempo]')
-      if (tempo) {
-        metadata.tempo = parseInt(tempo.getAttribute('tempo') || '120')
-      }
-    }
+    metadata.tempo = this.extractTempo()
+
+    // 提取 credit 信息
+    metadata.credits = this.extractCredits()
 
     return metadata
   }
 
   /**
-   * 提取谱表
+   * 提取速度
+   */
+  private extractTempo(): number {
+    if (!this.doc) return 120
+
+    // 查找 metronome 标记
+    const metronome = this.doc.querySelector('metronome')
+    if (metronome) {
+      const perMinute = metronome.querySelector('per-minute')
+      if (perMinute) {
+        return parseInt(perMinute.textContent || '120')
+      }
+    }
+
+    // 查找 sound[tempo] 属性
+    const sound = this.doc.querySelector('sound[tempo]')
+    if (sound) {
+      return parseInt(sound.getAttribute('tempo') || '120')
+    }
+
+    return 120
+  }
+
+  /**
+   * 提取 credit 信息
+   */
+  private extractCredits(): Credit[] {
+    if (!this.doc) return []
+
+    const credits: Credit[] = []
+    const creditElements = this.doc.querySelectorAll('credit')
+
+    creditElements.forEach(creditElement => {
+      const page = parseInt(creditElement.getAttribute('page') || '1')
+      const creditWords = creditElement.querySelector('credit-words')
+      
+      if (creditWords) {
+        credits.push({
+          page,
+          content: creditWords.textContent || '',
+          x: parseFloat(creditWords.getAttribute('default-x') || '0'),
+          y: parseFloat(creditWords.getAttribute('default-y') || '0'),
+          fontSize: parseFloat(creditWords.getAttribute('font-size') || '12'),
+          fontFamily: creditWords.getAttribute('font-family') || undefined,
+          fontStyle: creditWords.getAttribute('font-style') || undefined,
+          fontWeight: creditWords.getAttribute('font-weight') || undefined,
+          justify: creditWords.getAttribute('justify') || undefined
+        })
+      }
+    })
+
+    return credits
+  }
+
+  /**
+   * 提取声部列表
    */
   extractParts(): Part[] {
     if (!this.doc) {
@@ -161,38 +206,32 @@ export class MusicXMLParser {
     }
 
     const parts: Part[] = []
-    const partElements = this.doc.querySelectorAll('part')
+    const partElements = this.doc.querySelectorAll(':scope > part')
 
-    partElements.forEach((partElement, index) => {
-      const partId = partElement.getAttribute('id') || `P${index + 1}`
-      
-      // 从part-list中获取谱表名称
-      const partList = this.doc!.querySelector('part-list')
-      let partName = `谱表 ${index + 1}`
-      
-      if (partList) {
-        const scorePart = partList.querySelector(`score-part[id="${partId}"]`)
-        if (scorePart) {
-          const partNameElement = scorePart.querySelector('part-name')
-          if (partNameElement) {
-            partName = partNameElement.textContent || partName
-          }
-        }
-      }
+    // 获取 part-list 信息
+    const partInfos = this.extractPartList()
 
-      // 获取该谱表包含的小节ID
-      const measureElements = partElement.querySelectorAll('measure')
-      const measureIds: string[] = []
+    partElements.forEach((partElement) => {
+      const partId = partElement.getAttribute('id') || ''
+      const partInfo = partInfos.find(p => p.id === partId)
       
-      measureElements.forEach((measureElement, measureIndex) => {
-        const measureId = `${partId}_M${measureIndex + 1}`
-        measureIds.push(measureId)
-      })
+      // 解析谱表数量
+      const staves = this.extractStavesCount(partElement)
+      
+      // 解析移调信息
+      const transpose = this.extractTranspose(partElement)
+
+      // 解析小节
+      const measures = this.extractMeasures(partElement, staves)
 
       parts.push({
         id: partId,
-        name: partName,
-        measures: measureIds
+        name: partInfo?.name || `Part ${partId}`,
+        abbreviation: partInfo?.abbreviation,
+        staves,
+        measures,
+        instrument: partInfo?.instrument,
+        transpose
       })
     })
 
@@ -200,50 +239,96 @@ export class MusicXMLParser {
   }
 
   /**
+   * 提取 part-list 信息
+   */
+  private extractPartList(): PartInfo[] {
+    if (!this.doc) return []
+
+    const partInfos: PartInfo[] = []
+    const partList = this.doc.querySelector('part-list')
+    
+    if (!partList) return []
+
+    const scoreParts = partList.querySelectorAll('score-part')
+    scoreParts.forEach(scorePart => {
+      const id = scorePart.getAttribute('id') || ''
+      const name = scorePart.querySelector('part-name')?.textContent || ''
+      const abbreviation = scorePart.querySelector('part-abbreviation')?.textContent || ''
+      
+      const instrumentElement = scorePart.querySelector('score-instrument')
+      const instrument = instrumentElement ? {
+        id: instrumentElement.getAttribute('id') || '',
+        name: instrumentElement.querySelector('instrument-name')?.textContent || '',
+        sound: instrumentElement.querySelector('instrument-sound')?.textContent || undefined
+      } : undefined
+
+      partInfos.push({ id, name, abbreviation, instrument })
+    })
+
+    return partInfos
+  }
+
+  /**
+   * 提取谱表数量
+   */
+  private extractStavesCount(partElement: Element): number {
+    const stavesElement = partElement.querySelector('attributes > staves')
+    if (stavesElement) {
+      return parseInt(stavesElement.textContent || '1')
+    }
+    return 1
+  }
+
+  /**
+   * 提取移调信息
+   */
+  private extractTranspose(partElement: Element): Transpose | undefined {
+    const transposeElement = partElement.querySelector('attributes > transpose')
+    if (!transposeElement) return undefined
+
+    return {
+      diatonic: parseInt(transposeElement.querySelector('diatonic')?.textContent || '0'),
+      chromatic: parseInt(transposeElement.querySelector('chromatic')?.textContent || '0'),
+      octaveChange: parseInt(transposeElement.querySelector('octave-change')?.textContent || '0')
+    }
+  }
+
+  /**
    * 提取小节
    */
-  extractMeasures(): Measure[] {
-    if (!this.doc) {
-      throw new Error('文档未加载')
-    }
-
+  private extractMeasures(partElement: Element, staves: number): Measure[] {
     const measures: Measure[] = []
-    const partElements = this.doc.querySelectorAll('part')
+    const measureElements = partElement.querySelectorAll(':scope > measure')
 
-    partElements.forEach((partElement) => {
-      const partId = partElement.getAttribute('id') || ''
-      const measureElements = partElement.querySelectorAll('measure')
+    measureElements.forEach((measureElement) => {
+      const measureNumber = parseInt(measureElement.getAttribute('number') || '0')
+      const measureId = `${partElement.getAttribute('id')}_M${measureNumber}`
+      const width = parseFloat(measureElement.getAttribute('width') || '0')
 
-      measureElements.forEach((measureElement, measureIndex) => {
-        const measureNumber = parseInt(measureElement.getAttribute('number') || `${measureIndex + 1}`)
-        const measureId = `${partId}_M${measureNumber}`
+      // 提取属性
+      const attributes = this.extractMeasureAttributes(measureElement, staves)
+      
+      // 提取声部
+      const voices = this.extractVoices(measureElement, measureId)
+      
+      // 提取方向标记
+      const directions = this.extractDirections(measureElement)
+      
+      // 提取小节线
+      const barlines = this.extractBarlines(measureElement)
+      
+      // 提取打印布局
+      const print = this.extractPrintLayout(measureElement)
 
-        // 提取小节属性
-        const attributes = this.extractMeasureAttributes(measureElement)
-
-        // 提取音符ID
-        const noteElements = measureElement.querySelectorAll('note')
-        const noteIds: string[] = []
-        
-        noteElements.forEach((noteElement, noteIndex) => {
-          const noteId = `${measureId}_N${noteIndex + 1}`
-          noteIds.push(noteId)
-        })
-
-        // 提取标注ID（从direction或harmony元素）
-        const annotationIds: string[] = []
-        const directions = measureElement.querySelectorAll('direction')
-        directions.forEach((direction, index) => {
-          annotationIds.push(`${measureId}_A${index + 1}`)
-        })
-
-        measures.push({
-          id: measureId,
-          number: measureNumber,
-          attributes,
-          notes: noteIds,
-          annotations: annotationIds
-        })
+      measures.push({
+        id: measureId,
+        number: measureNumber,
+        width: width || undefined,
+        attributes,
+        voices,
+        directions,
+        barlines,
+        print
       })
     })
 
@@ -253,141 +338,184 @@ export class MusicXMLParser {
   /**
    * 提取小节属性
    */
-  private extractMeasureAttributes(measureElement: Element): MeasureAttributes {
+  private extractMeasureAttributes(measureElement: Element, defaultStaves: number): MeasureAttributes {
     const attributes: MeasureAttributes = {
       key: 'C',
+      mode: 'major',
       time: '4/4',
-      clef: 'treble',
-      divisions: 1
+      divisions: 1,
+      staves: defaultStaves,
+      clefs: []
     }
 
-    const attributesElement = measureElement.querySelector('attributes')
-    if (attributesElement) {
-      // 提取调号
-      const keyElement = attributesElement.querySelector('key')
-      if (keyElement) {
-        const fifthsElement = keyElement.querySelector('fifths')
-        if (fifthsElement) {
-          const fifths = parseInt(fifthsElement.textContent || '0')
-          attributes.key = this.fifthsToKeySignature(fifths, 'major')
-        }
-      }
+    const attributesElement = measureElement.querySelector(':scope > attributes')
+    if (!attributesElement) return attributes
 
-      // 提取拍号
-      const timeElement = attributesElement.querySelector('time')
-      if (timeElement) {
-        const beats = timeElement.querySelector('beats')
-        const beatType = timeElement.querySelector('beat-type')
-        if (beats && beatType) {
-          attributes.time = `${beats.textContent}/${beatType.textContent}`
-        }
-      }
+    // 提取 divisions
+    const divisionsElement = attributesElement.querySelector(':scope > divisions')
+    if (divisionsElement) {
+      attributes.divisions = parseInt(divisionsElement.textContent || '1')
+    }
 
-      // 提取谱号
-      const clefElement = attributesElement.querySelector('clef')
-      if (clefElement) {
-        const sign = clefElement.querySelector('sign')
-        if (sign) {
-          attributes.clef = sign.textContent || 'treble'
-        }
-      }
+    // 提取谱表数量
+    const stavesElement = attributesElement.querySelector(':scope > staves')
+    if (stavesElement) {
+      attributes.staves = parseInt(stavesElement.textContent || '1')
+    }
 
-      // 提取divisions
-      const divisionsElement = attributesElement.querySelector('divisions')
-      if (divisionsElement) {
-        attributes.divisions = parseInt(divisionsElement.textContent || '1')
-      }
+    // 提取调号
+    const keyElement = attributesElement.querySelector(':scope > key')
+    if (keyElement) {
+      const fifths = parseInt(keyElement.querySelector(':scope > fifths')?.textContent || '0')
+      attributes.key = this.fifthsToKeySignature(fifths, 'major')
+      attributes.mode = keyElement.querySelector(':scope > mode')?.textContent || 'major'
+    }
+
+    // 提取拍号
+    const timeElement = attributesElement.querySelector(':scope > time')
+    if (timeElement) {
+      const beats = timeElement.querySelector(':scope > beats')?.textContent || '4'
+      const beatType = timeElement.querySelector(':scope > beat-type')?.textContent || '4'
+      attributes.time = `${beats}/${beatType}`
+    }
+
+    // 提取谱号（可能有多个）
+    const clefElements = attributesElement.querySelectorAll(':scope > clef')
+    clefElements.forEach(clefElement => {
+      const number = parseInt(clefElement.getAttribute('number') || '1')
+      const sign = clefElement.querySelector(':scope > sign')?.textContent || 'G'
+      const line = parseInt(clefElement.querySelector(':scope > line')?.textContent || '2')
+      const octaveChange = parseInt(clefElement.querySelector(':scope > clef-octave-change')?.textContent || '0')
+
+      attributes.clefs.push({
+        number,
+        sign,
+        line,
+        clefOctaveChange: octaveChange || undefined
+      })
+    })
+
+    // 如果没有谱号信息，添加默认谱号
+    if (attributes.clefs.length === 0) {
+      attributes.clefs.push({ number: 1, sign: 'G', line: 2 })
     }
 
     return attributes
   }
 
   /**
-   * 提取音符
+   * 提取声部（处理 backup）
    */
-  extractNotes(): Note[] {
-    if (!this.doc) {
-      throw new Error('文档未加载')
+  private extractVoices(measureElement: Element, measureId: string): Map<number, Voice> {
+    const voices = new Map<number, Voice>()
+    let noteIndex = 0
+
+    const children = Array.from(measureElement.children)
+    let i = 0
+
+    while (i < children.length) {
+      const element = children[i]
+
+      if (element.tagName === 'note') {
+        const note = this.extractNoteData(element, `${measureId}_N${++noteIndex}`)
+        
+        if (note) {
+          const voiceId = note.voice
+          
+          if (!voices.has(voiceId)) {
+            voices.set(voiceId, {
+              id: voiceId,
+              staff: note.staff,
+              notes: []
+            })
+          }
+          
+          voices.get(voiceId)!.notes.push(note)
+        }
+      }
+      // backup 元素不需要处理，voice 已经正确分配
+      // backup 只是表示时间点的回退，不影响数据结构
+
+      i++
     }
 
-    const notes: Note[] = []
-    const partElements = this.doc.querySelectorAll('part')
-
-    partElements.forEach((partElement) => {
-      const partId = partElement.getAttribute('id') || ''
-      const measureElements = partElement.querySelectorAll('measure')
-
-      measureElements.forEach((measureElement, measureIndex) => {
-        const measureNumber = parseInt(measureElement.getAttribute('number') || `${measureIndex + 1}`)
-        const measureId = `${partId}_M${measureNumber}`
-        const noteElements = measureElement.querySelectorAll('note')
-
-        noteElements.forEach((noteElement, noteIndex) => {
-          const noteId = `${measureId}_N${noteIndex + 1}`
-          const note = this.extractNoteData(noteElement, noteId)
-          if (note) {
-            notes.push(note)
-          }
-        })
-      })
-    })
-
-    return notes
+    return voices
   }
 
   /**
    * 提取单个音符数据
    */
   private extractNoteData(noteElement: Element, noteId: string): Note | null {
-    // 跳过休止符
-    const rest = noteElement.querySelector('rest')
-    if (rest) {
-      return null
-    }
-
-    const pitchElement = noteElement.querySelector('pitch')
-    if (!pitchElement) {
-      return null
-    }
-
-    const step = pitchElement.querySelector('step')?.textContent || 'C'
-    const octave = pitchElement.querySelector('octave')?.textContent || '4'
-    const alter = pitchElement.querySelector('alter')?.textContent || '0'
+    // 检查是否为休止符
+    const isRest = !!noteElement.querySelector(':scope > rest')
     
-    let pitch = `${step}${octave}`
-    if (alter !== '0') {
-      const alterNum = parseInt(alter)
-      if (alterNum > 0) {
-        pitch = `${step}${'#'.repeat(alterNum)}${octave}`
-      } else if (alterNum < 0) {
-        pitch = `${step}${'b'.repeat(Math.abs(alterNum))}${octave}`
+    // 提取 voice
+    const voice = parseInt(noteElement.querySelector(':scope > voice')?.textContent || '1')
+    
+    // 提取 staff
+    const staff = parseInt(noteElement.querySelector(':scope > staff')?.textContent || '1')
+
+    // 提取音高
+    let pitch = ''
+    if (!isRest) {
+      const pitchElement = noteElement.querySelector(':scope > pitch')
+      if (pitchElement) {
+        const step = pitchElement.querySelector(':scope > step')?.textContent || 'C'
+        const octave = pitchElement.querySelector(':scope > octave')?.textContent || '4'
+        const alter = pitchElement.querySelector(':scope > alter')?.textContent || '0'
+        
+        pitch = `${step}${octave}`
+        if (alter !== '0') {
+          const alterNum = parseInt(alter)
+          if (alterNum > 0) {
+            pitch = `${step}${'#'.repeat(alterNum)}${octave}`
+          } else if (alterNum < 0) {
+            pitch = `${step}${'b'.repeat(Math.abs(alterNum))}${octave}`
+          }
+        }
       }
     }
 
-    const duration = parseInt(noteElement.querySelector('duration')?.textContent || '1')
-    const type = noteElement.querySelector('type')?.textContent || 'quarter'
-    
-    let stem = 'up'
-    const stemElement = noteElement.querySelector('stem')
-    if (stemElement) {
-      stem = stemElement.textContent || 'up'
+    // 提取时值
+    const duration = parseInt(noteElement.querySelector(':scope > duration')?.textContent || '0')
+    const type = noteElement.querySelector(':scope > type')?.textContent || 'quarter'
+
+    // 提取 stem
+    const stem = noteElement.querySelector(':scope > stem')?.textContent || 'up'
+
+    // 提取 beam
+    const beamElement = noteElement.querySelector(':scope > beam')
+    const beam = beamElement?.textContent || undefined
+
+    // 提取 accidental
+    const accidentalElement = noteElement.querySelector(':scope > accidental')
+    const accidental = accidentalElement?.textContent || undefined
+
+    // 提取附点
+    const dots = noteElement.querySelectorAll(':scope > dot').length
+
+    // 检查是否为和弦
+    const isChord = !!noteElement.querySelector(':scope > chord')
+
+    // 提取连音线
+    let tie: 'start' | 'stop' | 'continue' | undefined
+    const tieElement = noteElement.querySelector(':scope > tie')
+    if (tieElement) {
+      tie = tieElement.getAttribute('type') as 'start' | 'stop' | 'continue'
     }
 
-    let beam: string | undefined
-    const beamElement = noteElement.querySelector('beam')
-    if (beamElement) {
-      beam = beamElement.textContent || undefined
-    }
+    // 提取歌词
+    const lyrics = this.extractLyrics(noteElement)
 
-    let accidental: string | undefined
-    const accidentalElement = noteElement.querySelector('accidental')
-    if (accidentalElement) {
-      accidental = accidentalElement.textContent || undefined
-    }
+    // 提取记号
+    const notations = this.extractNotations(noteElement)
 
-    let dots = 0
-    const dotElements = noteElement.querySelectorAll('dot')
-    dots = dotElements.length
+    // 提取颜色
+    const color = noteElement.getAttribute('color') || undefined
+
+    // 提取位置
+    const defaultX = parseFloat(noteElement.getAttribute('default-x') || '0') || undefined
+    const defaultY = parseFloat(noteElement.getAttribute('default-y') || '0') || undefined
 
     return {
       id: noteId,
@@ -397,190 +525,233 @@ export class MusicXMLParser {
       stem,
       beam,
       accidental,
-      dots
+      dots,
+      voice,
+      staff,
+      isChord,
+      isRest,
+      tie,
+      lyrics,
+      notations,
+      color,
+      defaultX,
+      defaultY
     }
   }
 
   /**
-   * 提取标注
+   * 提取歌词
    */
-  extractAnnotations(): Annotation[] {
-    if (!this.doc) {
-      throw new Error('文档未加载')
-    }
+  private extractLyrics(noteElement: Element): Lyric[] {
+    const lyrics: Lyric[] = []
+    const lyricElements = noteElement.querySelectorAll(':scope > lyric')
 
-    const annotations: Annotation[] = []
-    const partElements = this.doc.querySelectorAll('part')
+    lyricElements.forEach(lyricElement => {
+      const number = lyricElement.getAttribute('number') || ''
+      const syllabic = lyricElement.querySelector(':scope > syllabic')?.textContent || 'single'
+      const text = lyricElement.querySelector(':scope > text')?.textContent || ''
+      const extend = !!lyricElement.querySelector(':scope > extend')
+      const defaultY = parseFloat(lyricElement.getAttribute('default-y') || '0') || undefined
+      const color = lyricElement.getAttribute('color') || undefined
 
-    partElements.forEach((partElement) => {
-      const partId = partElement.getAttribute('id') || ''
-      const measureElements = partElement.querySelectorAll('measure')
-
-      measureElements.forEach((measureElement, measureIndex) => {
-        const measureNumber = parseInt(measureElement.getAttribute('number') || `${measureIndex + 1}`)
-        const measureId = `${partId}_M${measureNumber}`
-
-        // 提取direction元素作为标注
-        const directions = measureElement.querySelectorAll('direction')
-        directions.forEach((direction, index) => {
-          const annotation = this.extractAnnotationFromDirection(direction, `${measureId}_A${index + 1}`, measureNumber)
-          if (annotation) {
-            annotations.push(annotation)
-          }
-        })
-
-        // 提取harmony元素作为和声标注
-        const harmonies = measureElement.querySelectorAll('harmony')
-        harmonies.forEach((harmony, index) => {
-          const annotation = this.extractAnnotationFromHarmony(harmony, `${measureId}_H${index + 1}`, measureNumber)
-          if (annotation) {
-            annotations.push(annotation)
-          }
-        })
+      lyrics.push({
+        number,
+        syllabic,
+        text,
+        extend,
+        defaultY,
+        color
       })
     })
 
-    return annotations
+    return lyrics
   }
 
   /**
-   * 从direction元素提取标注
+   * 提取记号
    */
-  private extractAnnotationFromDirection(direction: Element, annotationId: string, measureNumber: number): Annotation | null {
-    const directionType = direction.querySelector('direction-type')
-    if (!directionType) {
-      return null
-    }
+  private extractNotations(noteElement: Element): Notation[] {
+    const notations: Notation[] = []
+    const notationsElement = noteElement.querySelector(':scope > notations')
+    
+    if (!notationsElement) return notations
 
-    // 尝试提取文本标注
-    const words = directionType.querySelector('words')
-    if (words) {
-      const content = words.textContent || ''
-      const type = this.inferAnnotationType(content)
-      
-      return {
-        id: annotationId,
-        type,
-        level: 'basic',
-        startMeasure: measureNumber,
-        endMeasure: measureNumber,
-        content,
-        style: this.getDefaultStyleForType(type)
+    const notation: Notation = {}
+
+    // 提取连音线
+    const tiedElements = notationsElement.querySelectorAll(':scope > tied')
+    if (tiedElements.length > 0) {
+      notation.tied = {
+        type: tiedElements[0].getAttribute('type') || 'start'
       }
     }
 
-    return null
-  }
+    // 提取圆滑线
+    const slurElements = notationsElement.querySelectorAll(':scope > slur')
+    slurElements.forEach(slurElement => {
+      notation.slur = {
+        type: slurElement.getAttribute('type') || 'start',
+        number: parseInt(slurElement.getAttribute('number') || '1')
+      }
+    })
 
-  /**
-   * 从harmony元素提取和声标注
-   */
-  private extractAnnotationFromHarmony(harmony: Element, annotationId: string, measureNumber: number): Annotation | null {
-    const root = harmony.querySelector('root')
-    const kind = harmony.querySelector('kind')
-    
-    if (root && kind) {
-      const rootStep = root.querySelector('root-step')?.textContent || ''
-      const rootAlter = root.querySelector('root-alter')?.textContent || '0'
-      const kindText = kind.textContent || ''
-      
-      let content = rootStep
-      if (rootAlter !== '0') {
-        const alterNum = parseInt(rootAlter)
-        if (alterNum > 0) {
-          content += '#'
-        } else if (alterNum < 0) {
-          content += 'b'
+    // 提取延长记号
+    const fermataElement = notationsElement.querySelector(':scope > fermata')
+    if (fermataElement) {
+      notation.fermata = fermataElement.textContent || 'normal'
+    }
+
+    // 提取演奏法
+    const articulationsElement = notationsElement.querySelector(':scope > articulations')
+    if (articulationsElement) {
+      notation.articulations = []
+      const articulationTypes = ['accent', 'staccato', 'tenuto', 'marcato']
+      articulationTypes.forEach(type => {
+        if (articulationsElement.querySelector(`:scope > ${type}`)) {
+          notation.articulations!.push(type)
         }
-      }
-      content += ` ${kindText}`
-
-      return {
-        id: annotationId,
-        type: 'harmonic',
-        level: 'basic',
-        startMeasure: measureNumber,
-        endMeasure: measureNumber,
-        content,
-        style: this.getDefaultStyleForType('harmonic')
-      }
+      })
     }
 
-    return null
+    if (Object.keys(notation).length > 0) {
+      notations.push(notation)
+    }
+
+    return notations
   }
 
   /**
-   * 推断标注类型
+   * 提取方向标记
    */
-  private inferAnnotationType(content: string): 'structural' | 'motivic' | 'harmonic' | 'annotation' {
-    const lowerContent = content.toLowerCase()
-    
-    // 结构性标注关键词
-    const structuralKeywords = ['exposition', 'development', 'recapitulation', 'coda', 'introduction', 
-                               '呈示部', '展开部', '再现部', '尾声', '引子']
-    
-    // 动机性标注关键词
-    const motivicKeywords = ['motive', 'motif', 'theme', 'subject', '动机', '主题']
-    
-    // 和声性标注关键词
-    const harmonicKeywords = ['tonic', 'dominant', 'subdominant', 'chord', 'harmony',
-                             '主和弦', '属和弦', '下属和弦', '和弦', '和声']
-    
-    if (structuralKeywords.some(keyword => lowerContent.includes(keyword))) {
-      return 'structural'
-    }
-    
-    if (motivicKeywords.some(keyword => lowerContent.includes(keyword))) {
-      return 'motivic'
-    }
-    
-    if (harmonicKeywords.some(keyword => lowerContent.includes(keyword))) {
-      return 'harmonic'
-    }
-    
-    return 'annotation'
+  private extractDirections(measureElement: Element): Direction[] {
+    const directions: Direction[] = []
+    const directionElements = measureElement.querySelectorAll(':scope > direction')
+
+    directionElements.forEach(directionElement => {
+      const directionType = directionElement.querySelector(':scope > direction-type')
+      if (!directionType) return
+
+      const staff = parseInt(directionElement.querySelector(':scope > staff')?.textContent || '0') || undefined
+      const voice = parseInt(directionElement.querySelector(':scope > voice')?.textContent || '0') || undefined
+      const placement = directionElement.getAttribute('placement') || undefined
+
+      // 速度标记
+      const metronome = directionType.querySelector(':scope > metronome')
+      if (metronome) {
+        const beatUnit = metronome.querySelector(':scope > beat-unit')?.textContent || 'quarter'
+        const perMinute = metronome.querySelector(':scope > per-minute')?.textContent || '120'
+        directions.push({
+          type: 'metronome',
+          content: { beatUnit, perMinute: parseInt(perMinute) },
+          staff,
+          voice,
+          placement
+        })
+      }
+
+      // 力度标记
+      const dynamics = directionType.querySelector(':scope > dynamics')
+      if (dynamics) {
+        const dynamicType = dynamics.children[0]?.tagName || 'mf'
+        directions.push({
+          type: 'dynamics',
+          content: dynamicType,
+          staff,
+          voice,
+          placement
+        })
+      }
+
+      // 文字标记
+      const words = directionType.querySelector(':scope > words')
+      if (words) {
+        directions.push({
+          type: 'words',
+          content: words.textContent || '',
+          staff,
+          voice,
+          placement
+        })
+      }
+
+      // 排练标记
+      const rehearsal = directionType.querySelector(':scope > rehearsal')
+      if (rehearsal) {
+        directions.push({
+          type: 'rehearsal',
+          content: rehearsal.textContent || '',
+          staff,
+          voice,
+          placement
+        })
+      }
+    })
+
+    return directions
   }
 
   /**
-   * 获取类型默认样式
+   * 提取小节线
    */
-  private getDefaultStyleForType(type: string) {
-    const styles = {
-      structural: {
-        color: '#ffffff',
-        backgroundColor: 'rgba(64, 158, 255, 0.2)',
-        borderColor: '#409eff',
-        borderWidth: 2,
-        fontSize: 14,
-        fontFamily: 'Arial, sans-serif'
-      },
-      motivic: {
-        color: '#ffffff',
-        backgroundColor: 'rgba(103, 194, 58, 0.2)',
-        borderColor: '#67c23a',
-        borderWidth: 2,
-        fontSize: 12,
-        fontFamily: 'Arial, sans-serif'
-      },
-      harmonic: {
-        color: '#ffffff',
-        backgroundColor: 'rgba(230, 162, 60, 0.2)',
-        borderColor: '#e6a23c',
-        borderWidth: 2,
-        fontSize: 12,
-        fontFamily: 'Arial, sans-serif'
-      },
-      annotation: {
-        color: '#ffffff',
-        backgroundColor: 'rgba(144, 147, 153, 0.2)',
-        borderColor: '#909399',
-        borderWidth: 1,
-        fontSize: 11,
-        fontFamily: 'Arial, sans-serif'
+  private extractBarlines(measureElement: Element): Barline[] {
+    const barlines: Barline[] = []
+    const barlineElements = measureElement.querySelectorAll(':scope > barline')
+
+    barlineElements.forEach(barlineElement => {
+      const location = barlineElement.getAttribute('location') || 'right'
+      const barStyle = barlineElement.querySelector(':scope > bar-style')?.textContent || 'regular'
+      
+      const repeatElement = barlineElement.querySelector(':scope > repeat')
+      const repeat = repeatElement ? {
+        direction: repeatElement.getAttribute('direction') || 'forward',
+        times: parseInt(repeatElement.getAttribute('times') || '0') || undefined
+      } : undefined
+
+      barlines.push({
+        location,
+        barStyle,
+        repeat
+      })
+    })
+
+    return barlines
+  }
+
+  /**
+   * 提取打印布局
+   */
+  private extractPrintLayout(measureElement: Element): PrintLayout | undefined {
+    const printElement = measureElement.querySelector(':scope > print')
+    if (!printElement) return undefined
+
+    const print: PrintLayout = {
+      newSystem: printElement.getAttribute('new-system') === 'yes',
+      newPage: printElement.getAttribute('new-page') === 'yes'
+    }
+
+    // 系统布局
+    const systemLayoutElement = printElement.querySelector(':scope > system-layout')
+    if (systemLayoutElement) {
+      const systemMargins = systemLayoutElement.querySelector(':scope > system-margins')
+      print.systemLayout = {
+        systemMargins: {
+          leftMargin: parseFloat(systemMargins?.querySelector(':scope > left-margin')?.textContent || '0'),
+          rightMargin: parseFloat(systemMargins?.querySelector(':scope > right-margin')?.textContent || '0')
+        },
+        systemDistance: parseFloat(systemLayoutElement.querySelector(':scope > system-distance')?.textContent || '0') || undefined,
+        topSystemDistance: parseFloat(systemLayoutElement.querySelector(':scope > top-system-distance')?.textContent || '0') || undefined
       }
     }
-    
-    return styles[type as keyof typeof styles] || styles.annotation
+
+    // 谱表布局
+    const staffLayoutElement = printElement.querySelector(':scope > staff-layout')
+    if (staffLayoutElement) {
+      print.staffLayout = {
+        staffDistance: parseFloat(staffLayoutElement.querySelector(':scope > staff-distance')?.textContent || '0')
+      }
+    }
+
+    return print
   }
 
   /**
@@ -590,7 +761,7 @@ export class MusicXMLParser {
     const majorKeys = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#']
     const minorKeys = ['Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#']
     
-    const index = fifths + 7 // 调整索引，C大调对应7
+    const index = fifths + 7
     
     if (mode === 'minor') {
       return minorKeys[index] || 'C'

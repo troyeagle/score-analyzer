@@ -338,3 +338,87 @@ npm run lint
 - [ ] 组件职责单一
 - [ ] 样式使用 scoped
 - [ ] 无未使用的导入/变量
+
+## 十二、MusicXML 解析经验教训
+
+### 12.1 数据模型设计
+
+**教训**: 不要将所有声部的小节和音符扁平化存储，应该保持层次结构。
+
+**正确做法**:
+```typescript
+// 正确：按声部层次组织
+interface Part {
+  id: string
+  name: string
+  staves: number
+  measures: Measure[]  // 该声部的小节
+}
+
+interface Measure {
+  voices: Map<number, Voice>  // 按 voice 编号组织
+}
+
+interface Voice {
+  id: number
+  staff: number
+  notes: Note[]
+}
+```
+
+**错误做法**:
+```typescript
+// 错误：扁平化存储导致信息丢失
+interface MusicXMLParseResult {
+  measures: Measure[]  // 所有声部的小节混在一起
+  notes: Note[]        // 所有音符混在一起
+}
+```
+
+### 12.2 多谱表处理
+
+**关键点**:
+1. 使用 `<staves>` 元素获取谱表数量
+2. 使用 `<clef number="N">` 为每个谱表指定谱号
+3. 使用 `<staff>N</staff>` 将音符分配到对应谱表
+4. 钢琴等乐器使用花括号（brace）连接左右手谱表
+
+### 12.3 多声部和 Backup
+
+**关键点**:
+1. 使用 `<voice>` 元素标识声部编号
+2. `<backup>` 元素表示时间点回退，不创建新数据
+3. 每个 voice 应该独立存储音符
+
+### 12.4 Sibelius 导出特点
+
+| 特点 | 处理方式 |
+|------|----------|
+| color="#000000" | 忽略，不影响渲染 |
+| 空 `<attributes />` | 使用上一个小节的属性 |
+| Opus 字体 | 映射到通用字体 |
+| staff-details 重复 | 只在变化时处理 |
+
+### 12.5 歌词解析
+
+**结构**:
+```xml
+<lyric number="part1verse1">
+  <syllabic>single|begin|middle|end</syllabic>
+  <text>歌词文本</text>
+  <extend/>  <!-- 延音线 -->
+</lyric>
+```
+
+**注意**:
+- 支持多行歌词（日语、罗马字、英语）
+- syllabic 属性用于拼接多音节词
+- extend 标记表示延音线
+
+### 12.6 测试策略
+
+**经验**:
+1. 使用真实的 MusicXML 文件作为测试数据
+2. 测试每个声部的小节数是否正确
+3. 测试多谱表的解析
+4. 测试歌词、连音线等特殊元素

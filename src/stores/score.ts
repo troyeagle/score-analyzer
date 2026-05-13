@@ -9,29 +9,17 @@ import type {
   Annotation,
   AnnotationLayer,
   LayoutConfig,
-  StaveLayout,
-  DEFAULT_LAYOUT_CONFIG
+  StaveLayout
 } from '../types'
+import { DEFAULT_LAYOUT_CONFIG } from '../types'
 
 export const useScoreStore = defineStore('score', () => {
   // 状态
   const metadata = ref<ScoreMetadata | null>(null)
   const parts = ref<Part[]>([])
-  const measures = ref<Measure[]>([])
-  const notes = ref<Note[]>([])
-  const annotations = ref<Annotation[]>([])
+  const selectedPartIds = ref<string[]>([])
   const layers = ref<AnnotationLayer[]>([])
-  const layoutConfig = ref<LayoutConfig>({
-    pageWidth: 800,
-    pageHeight: 1100,
-    marginTop: 50,
-    marginBottom: 50,
-    marginLeft: 40,
-    marginRight: 40,
-    staveSpacing: 80,
-    systemSpacing: 100,
-    measurePadding: 10
-  })
+  const layoutConfig = ref<LayoutConfig>({ ...DEFAULT_LAYOUT_CONFIG })
   const staveLayouts = ref<StaveLayout[]>([])
   const isLoaded = ref(false)
   const loading = ref(false)
@@ -40,8 +28,23 @@ export const useScoreStore = defineStore('score', () => {
   // 计算属性
   const scoreTitle = computed(() => metadata.value?.title || '未命名作品')
   const scoreComposer = computed(() => metadata.value?.composer || '未知作曲家')
-  const totalMeasures = computed(() => measures.value.length)
+  
+  // 总小节数（取所有声部中最长的）
+  const totalMeasures = computed(() => {
+    if (parts.value.length === 0) return 0
+    return Math.max(...parts.value.map(p => p.measures.length))
+  })
+  
+  // 声部数量
+  const totalParts = computed(() => parts.value.length)
+  
+  // 可见的标注图层
   const visibleLayers = computed(() => layers.value.filter(layer => layer.visible))
+  
+  // 选中的声部
+  const selectedParts = computed(() => 
+    parts.value.filter(p => selectedPartIds.value.includes(p.id))
+  )
 
   // 初始化默认图层
   const initializeLayers = () => {
@@ -93,12 +96,9 @@ export const useScoreStore = defineStore('score', () => {
     try {
       metadata.value = parseResult.metadata
       parts.value = parseResult.parts
-      measures.value = parseResult.measures
-      notes.value = parseResult.notes
-      annotations.value = parseResult.annotations
       
-      // 将标注分配到对应图层
-      distributeAnnotationsToLayers()
+      // 默认选中所有声部
+      selectedPartIds.value = parseResult.parts.map(p => p.id)
       
       isLoaded.value = true
     } catch (err) {
@@ -109,20 +109,24 @@ export const useScoreStore = defineStore('score', () => {
     }
   }
 
-  // 将标注分配到对应图层
-  const distributeAnnotationsToLayers = () => {
-    // 清空现有图层标注
-    layers.value.forEach(layer => {
-      layer.annotations = []
-    })
-    
-    // 根据标注类型分配到对应图层
-    annotations.value.forEach(annotation => {
-      const layer = layers.value.find(l => l.type === annotation.type)
-      if (layer) {
-        layer.annotations.push(annotation)
-      }
-    })
+  // 切换声部选择
+  const togglePartSelection = (partId: string) => {
+    const index = selectedPartIds.value.indexOf(partId)
+    if (index === -1) {
+      selectedPartIds.value.push(partId)
+    } else {
+      selectedPartIds.value.splice(index, 1)
+    }
+  }
+
+  // 选择所有声部
+  const selectAllParts = () => {
+    selectedPartIds.value = parts.value.map(p => p.id)
+  }
+
+  // 取消选择所有声部
+  const deselectAllParts = () => {
+    selectedPartIds.value = []
   }
 
   // 切换图层可见性
@@ -143,9 +147,6 @@ export const useScoreStore = defineStore('score', () => {
 
   // 添加标注
   const addAnnotation = (annotation: Annotation) => {
-    annotations.value.push(annotation)
-    
-    // 添加到对应图层
     const layer = layers.value.find(l => l.type === annotation.type)
     if (layer) {
       layer.annotations.push(annotation)
@@ -154,25 +155,16 @@ export const useScoreStore = defineStore('score', () => {
 
   // 更新标注
   const updateAnnotation = (annotationId: string, updates: Partial<Annotation>) => {
-    const index = annotations.value.findIndex(a => a.id === annotationId)
-    if (index !== -1) {
-      annotations.value[index] = { ...annotations.value[index], ...updates }
-      
-      // 更新图层中的标注
-      layers.value.forEach(layer => {
-        const layerIndex = layer.annotations.findIndex(a => a.id === annotationId)
-        if (layerIndex !== -1) {
-          layer.annotations[layerIndex] = { ...layer.annotations[layerIndex], ...updates }
-        }
-      })
-    }
+    layers.value.forEach(layer => {
+      const index = layer.annotations.findIndex(a => a.id === annotationId)
+      if (index !== -1) {
+        layer.annotations[index] = { ...layer.annotations[index], ...updates }
+      }
+    })
   }
 
   // 删除标注
   const removeAnnotation = (annotationId: string) => {
-    annotations.value = annotations.value.filter(a => a.id !== annotationId)
-    
-    // 从图层中移除
     layers.value.forEach(layer => {
       layer.annotations = layer.annotations.filter(a => a.id !== annotationId)
     })
@@ -183,13 +175,32 @@ export const useScoreStore = defineStore('score', () => {
     layoutConfig.value = { ...layoutConfig.value, ...config }
   }
 
+  // 获取指定声部的小节
+  const getPartMeasures = (partId: string): Measure[] => {
+    const part = parts.value.find(p => p.id === partId)
+    return part?.measures || []
+  }
+
+  // 获取指定小节的所有音符
+  const getMeasureNotes = (partId: string, measureNumber: number): Note[] => {
+    const part = parts.value.find(p => p.id === partId)
+    if (!part) return []
+    
+    const measure = part.measures.find(m => m.number === measureNumber)
+    if (!measure) return []
+    
+    const notes: Note[] = []
+    measure.voices.forEach(voice => {
+      notes.push(...voice.notes)
+    })
+    return notes
+  }
+
   // 重置状态
   const reset = () => {
     metadata.value = null
     parts.value = []
-    measures.value = []
-    notes.value = []
-    annotations.value = []
+    selectedPartIds.value = []
     layers.value = []
     staveLayouts.value = []
     isLoaded.value = false
@@ -206,9 +217,7 @@ export const useScoreStore = defineStore('score', () => {
     // 状态
     metadata,
     parts,
-    measures,
-    notes,
-    annotations,
+    selectedPartIds,
     layers,
     layoutConfig,
     staveLayouts,
@@ -220,16 +229,23 @@ export const useScoreStore = defineStore('score', () => {
     scoreTitle,
     scoreComposer,
     totalMeasures,
+    totalParts,
     visibleLayers,
+    selectedParts,
     
     // 方法
     loadScore,
+    togglePartSelection,
+    selectAllParts,
+    deselectAllParts,
     toggleLayerVisibility,
     setLayerOpacity,
     addAnnotation,
     updateAnnotation,
     removeAnnotation,
     updateLayoutConfig,
+    getPartMeasures,
+    getMeasureNotes,
     reset,
     initializeLayers
   }
