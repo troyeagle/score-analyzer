@@ -21,31 +21,66 @@ import type {
 export class MusicXMLParser {
   private parser: DOMParser
   private doc: Document | null = null
+  private debug: boolean = true
 
   constructor() {
     this.parser = new DOMParser()
   }
 
   /**
+   * 设置调试模式
+   */
+  setDebug(enabled: boolean): void {
+    this.debug = enabled
+  }
+
+  /**
+   * 打印调试信息
+   */
+  private log(message: string, data?: any): void {
+    if (this.debug) {
+      if (data !== undefined) {
+        console.log(`[MusicXMLParser] ${message}`, data)
+      } else {
+        console.log(`[MusicXMLParser] ${message}`)
+      }
+    }
+  }
+
+  /**
    * 解析MusicXML文件
    */
-  async parse(file: File): Promise<MusicXMLParseResult> {
+  async parse(file: File, startMeasure?: number, endMeasure?: number): Promise<MusicXMLParseResult> {
+    this.log(`开始解析文件: ${file.name}, 大小: ${file.size} bytes`)
     const content = await this.readFileContent(file)
-    return this.parseFromString(content)
+    return this.parseFromString(content, startMeasure, endMeasure)
   }
 
   /**
    * 解析MusicXML字符串
    */
-  parseFromString(xml: string): MusicXMLParseResult {
+  parseFromString(xml: string, startMeasure?: number, endMeasure?: number): MusicXMLParseResult {
+    this.log('开始解析XML字符串, 长度:', xml.length)
+    
     this.doc = this.parser.parseFromString(xml, 'text/xml')
     
     if (!this.validate(this.doc)) {
       throw new Error('无效的MusicXML文件格式')
     }
 
+    this.log('XML解析成功，开始提取元数据')
     const metadata = this.extractMetadata()
-    const parts = this.extractParts()
+    
+    this.log('开始提取声部列表')
+    const parts = this.extractParts(startMeasure, endMeasure)
+
+    this.log('解析完成', {
+      title: metadata.title,
+      composer: metadata.composer,
+      partsCount: parts.length,
+      partNames: parts.map(p => p.name),
+      measuresPerPart: parts.map(p => p.measures.length)
+    })
 
     return {
       metadata,
@@ -200,20 +235,26 @@ export class MusicXMLParser {
   /**
    * 提取声部列表
    */
-  extractParts(): Part[] {
+  extractParts(startMeasure?: number, endMeasure?: number): Part[] {
     if (!this.doc) {
       throw new Error('文档未加载')
     }
 
+    this.log(`提取声部列表, 范围: ${startMeasure || 1} - ${endMeasure || '末尾'}`)
+
     const parts: Part[] = []
     const partElements = this.doc.querySelectorAll(':scope > part')
+
+    this.log(`找到 ${partElements.length} 个声部元素`)
 
     // 获取 part-list 信息
     const partInfos = this.extractPartList()
 
-    partElements.forEach((partElement) => {
+    partElements.forEach((partElement, index) => {
       const partId = partElement.getAttribute('id') || ''
       const partInfo = partInfos.find(p => p.id === partId)
+      
+      this.log(`处理声部 ${index + 1}/${partElements.length}: ${partId} (${partInfo?.name || '未知'})`)
       
       // 解析谱表数量
       const staves = this.extractStavesCount(partElement)
@@ -221,8 +262,10 @@ export class MusicXMLParser {
       // 解析移调信息
       const transpose = this.extractTranspose(partElement)
 
-      // 解析小节
-      const measures = this.extractMeasures(partElement, staves)
+      // 解析小节（支持范围）
+      const measures = this.extractMeasures(partElement, staves, startMeasure, endMeasure)
+
+      this.log(`声部 ${partId} 解析完成: ${measures.length} 个小节, ${staves} 个谱表`)
 
       parts.push({
         id: partId,
@@ -234,6 +277,8 @@ export class MusicXMLParser {
         transpose
       })
     })
+
+    this.log(`所有声部解析完成，共 ${parts.length} 个声部`)
 
     return parts
   }
@@ -294,14 +339,26 @@ export class MusicXMLParser {
   }
 
   /**
-   * 提取小节
+   * 提取小节（支持范围解析）
    */
-  private extractMeasures(partElement: Element, staves: number): Measure[] {
+  private extractMeasures(partElement: Element, staves: number, startMeasure?: number, endMeasure?: number): Measure[] {
     const measures: Measure[] = []
     const measureElements = partElement.querySelectorAll(':scope > measure')
+    
+    const totalMeasures = measureElements.length
+    const start = startMeasure || 1
+    const end = endMeasure || totalMeasures
+    
+    this.log(`提取小节: 总数=${totalMeasures}, 范围=${start}-${end}`)
 
     measureElements.forEach((measureElement) => {
       const measureNumber = parseInt(measureElement.getAttribute('number') || '0')
+      
+      // 范围过滤
+      if (measureNumber < start || measureNumber > end) {
+        return
+      }
+      
       const measureId = `${partElement.getAttribute('id')}_M${measureNumber}`
       const width = parseFloat(measureElement.getAttribute('width') || '0')
 
@@ -332,6 +389,7 @@ export class MusicXMLParser {
       })
     })
 
+    this.log(`提取到 ${measures.length} 个小节`)
     return measures
   }
 

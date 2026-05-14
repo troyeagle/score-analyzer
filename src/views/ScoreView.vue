@@ -15,7 +15,7 @@
                 drag
                 action="#"
                 :auto-upload="false"
-                :on-change="handleFileChange"
+                :on-change="handleFileSelect"
                 accept=".xml,.musicxml"
               >
                 <el-icon class="el-icon--upload"><upload-filled /></el-icon>
@@ -29,14 +29,65 @@
                 </template>
               </el-upload>
               
+              <!-- 文件元信息 -->
+              <div v-if="fileInfo" class="file-info">
+                <h4>文件信息</h4>
+                <p><strong>文件名：</strong>{{ fileInfo.fileName }}</p>
+                <p><strong>大小：</strong>{{ fileInfo.fileSize }}</p>
+                <p><strong>标题：</strong>{{ fileInfo.title }}</p>
+                <p><strong>作曲家：</strong>{{ fileInfo.composer }}</p>
+                <p><strong>调号：</strong>{{ fileInfo.keySignature }}</p>
+                <p><strong>拍号：</strong>{{ fileInfo.timeSignature }}</p>
+                <p><strong>声部数：</strong>{{ fileInfo.partsCount }}</p>
+                <p><strong>总小节数：</strong>{{ fileInfo.totalMeasures }}</p>
+                
+                <!-- 声部详情 -->
+                <div class="part-details">
+                  <h5>声部详情：</h5>
+                  <div v-for="part in fileInfo.parts" :key="part.id" class="part-detail-item">
+                    <span>{{ part.name }} ({{ part.id }})</span>
+                    <span>{{ part.measures }}小节, {{ part.staves }}谱表</span>
+                  </div>
+                </div>
+                
+                <!-- 小节范围选择 -->
+                <div class="measure-range">
+                  <h5>解析范围：</h5>
+                  <div class="range-inputs">
+                    <el-input-number 
+                      v-model="parseRange.start" 
+                      :min="1" 
+                      :max="fileInfo.totalMeasures"
+                      size="small"
+                      controls-position="right"
+                    />
+                    <span>至</span>
+                    <el-input-number 
+                      v-model="parseRange.end" 
+                      :min="parseRange.start" 
+                      :max="fileInfo.totalMeasures"
+                      size="small"
+                      controls-position="right"
+                    />
+                  </div>
+                  <el-button 
+                    type="primary" 
+                    size="small" 
+                    @click="handleParseAndRender"
+                    :loading="parsing"
+                    style="margin-top: 10px; width: 100%;"
+                  >
+                    解析并渲染
+                  </el-button>
+                </div>
+              </div>
+              
+              <!-- 解析后的乐谱信息 -->
               <div v-if="scoreStore.isLoaded" class="score-info">
-                <h4>乐谱信息</h4>
-                <p><strong>标题：</strong>{{ scoreStore.scoreTitle }}</p>
-                <p><strong>作曲家：</strong>{{ scoreStore.scoreComposer }}</p>
-                <p><strong>调号：</strong>{{ scoreStore.metadata?.keySignature }}</p>
-                <p><strong>拍号：</strong>{{ scoreStore.metadata?.timeSignature }}</p>
+                <h4>已加载乐谱</h4>
                 <p><strong>声部数：</strong>{{ scoreStore.totalParts }}</p>
                 <p><strong>小节数：</strong>{{ scoreStore.totalMeasures }}</p>
+                <p><strong>解析范围：</strong>{{ parseRange.start }} - {{ parseRange.end }}</p>
               </div>
             </div>
           </el-card>
@@ -185,7 +236,7 @@ import { useScoreStore } from '../stores/score'
 import { musicXMLParser } from '../services/MusicXMLParser'
 import { layoutEngine } from '../services/LayoutEngine'
 import { vexFlowRenderer } from '../services/VexFlowRenderer'
-import type { LayoutConfig } from '../types'
+import type { LayoutConfig, Part } from '../types'
 
 const scoreStore = useScoreStore()
 
@@ -194,6 +245,27 @@ const scoreOutput = ref<HTMLElement>()
 const currentLevel = ref('basic')
 const zoomLevel = ref(100)
 const isRendering = ref(false)
+const parsing = ref(false)
+const selectedFile = ref<File | null>(null)
+
+// 文件元信息
+const fileInfo = ref<{
+  fileName: string
+  fileSize: string
+  title: string
+  composer: string
+  keySignature: string
+  timeSignature: string
+  partsCount: number
+  totalMeasures: number
+  parts: Array<{ id: string; name: string; measures: number; staves: number }>
+} | null>(null)
+
+// 解析范围
+const parseRange = reactive({
+  start: 1,
+  end: 102
+})
 
 const layoutConfig = reactive<LayoutConfig>({
   pageWidth: 800,
@@ -208,25 +280,127 @@ const layoutConfig = reactive<LayoutConfig>({
   staffSpacing: 60
 })
 
-// 处理文件上传
-const handleFileChange = async (file: UploadFile) => {
+// 格式化文件大小
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+// 处理文件选择（只读取元信息）
+const handleFileSelect = async (file: UploadFile) => {
   if (!file.raw) return
   
+  selectedFile.value = file.raw
+  parsing.value = true
+  
   try {
-    console.log('开始解析文件:', file.name)
+    console.log('=== 文件选择 ===')
+    console.log('文件名:', file.name)
+    console.log('文件大小:', file.size, 'bytes')
     
-    const parseResult = await musicXMLParser.parse(file.raw)
-    console.log('解析结果:', {
-      parts: parseResult.parts.length,
-      partNames: parseResult.parts.map(p => p.name),
-      measuresPerPart: parseResult.parts.map(p => p.measures.length)
+    // 解析文件获取元信息
+    const content = await readFileContent(file.raw)
+    console.log('文件内容长度:', content.length, '字符')
+    
+    // 临时解析获取元信息
+    const tempParser = new (await import('../services/MusicXMLParser')).MusicXMLParser()
+    tempParser.setDebug(true)
+    
+    // 只解析前几个小节获取元信息
+    const parseResult = tempParser.parseFromString(content, 1, 5)
+    
+    console.log('=== 解析结果 ===')
+    console.log('标题:', parseResult.metadata.title)
+    console.log('作曲家:', parseResult.metadata.composer)
+    console.log('调号:', parseResult.metadata.keySignature)
+    console.log('拍号:', parseResult.metadata.timeSignature)
+    console.log('声部数量:', parseResult.parts.length)
+    
+    // 获取每个声部的小节总数
+    const partDetails = parseResult.parts.map(part => {
+      // 重新解析获取完整小节数
+      const fullPart = tempParser.parseFromString(content).parts.find(p => p.id === part.id)
+      return {
+        id: part.id,
+        name: part.name,
+        measures: fullPart?.measures.length || 0,
+        staves: part.staves
+      }
     })
+    
+    const totalMeasures = Math.max(...partDetails.map(p => p.measures))
+    
+    console.log('声部详情:', partDetails)
+    console.log('总小节数:', totalMeasures)
+    
+    fileInfo.value = {
+      fileName: file.name,
+      fileSize: formatFileSize(file.size || 0),
+      title: parseResult.metadata.title,
+      composer: parseResult.metadata.composer,
+      keySignature: parseResult.metadata.keySignature,
+      timeSignature: parseResult.metadata.timeSignature,
+      partsCount: parseResult.parts.length,
+      totalMeasures,
+      parts: partDetails
+    }
+    
+    // 设置默认解析范围
+    parseRange.start = 1
+    parseRange.end = Math.min(totalMeasures, 10) // 默认解析前10小节
+    
+  } catch (error) {
+    console.error('文件解析失败:', error)
+  } finally {
+    parsing.value = false
+  }
+}
+
+// 读取文件内容
+const readFileContent = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const result = e.target?.result
+      if (typeof result === 'string') {
+        resolve(result)
+      } else {
+        reject(new Error('无法读取文件内容'))
+      }
+    }
+    reader.onerror = () => reject(new Error('文件读取失败'))
+    reader.readAsText(file)
+  })
+}
+
+// 解析并渲染指定范围
+const handleParseAndRender = async () => {
+  if (!selectedFile.value) return
+  
+  parsing.value = true
+  
+  try {
+    console.log('=== 开始解析指定范围 ===')
+    console.log('范围:', parseRange.start, '-', parseRange.end)
+    
+    const content = await readFileContent(selectedFile.value)
+    
+    // 使用指定范围解析
+    musicXMLParser.setDebug(true)
+    const parseResult = await musicXMLParser.parse(selectedFile.value, parseRange.start, parseRange.end)
+    
+    console.log('=== 范围解析结果 ===')
+    console.log('声部数量:', parseResult.parts.length)
+    console.log('每个声部的小节数:', parseResult.parts.map(p => `${p.name}: ${p.measures.length}`))
     
     await scoreStore.loadScore(parseResult)
     await renderScore()
     
   } catch (error) {
-    console.error('文件解析失败:', error)
+    console.error('解析失败:', error)
+  } finally {
+    parsing.value = false
   }
 }
 
@@ -237,6 +411,9 @@ const renderScore = async () => {
   isRendering.value = true
   
   try {
+    console.log('=== 开始渲染 ===')
+    console.log('选中的声部:', scoreStore.selectedParts.map(p => p.name))
+    
     // 初始化VexFlow渲染器
     vexFlowRenderer.initialize(scoreOutput.value, layoutConfig.pageWidth, layoutConfig.pageHeight)
     
@@ -464,5 +641,96 @@ onUnmounted(() => {
 .score-controls {
   display: flex;
   gap: 10px;
+}
+
+.file-info {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: #f0f9ff;
+  border-radius: 4px;
+  border: 1px solid #b3d8ff;
+}
+
+.file-info h4 {
+  margin: 0 0 10px 0;
+  color: #409eff;
+}
+
+.file-info h5 {
+  margin: 10px 0 5px 0;
+  color: #606266;
+}
+
+.file-info p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #606266;
+}
+
+.part-details {
+  margin-top: 10px;
+  padding: 10px;
+  background-color: #fff;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+}
+
+.part-detail-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #909399;
+  border-bottom: 1px solid #f2f6fc;
+}
+
+.part-detail-item:last-child {
+  border-bottom: none;
+}
+
+.measure-range {
+  margin-top: 15px;
+  padding: 10px;
+  background-color: #fff;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+}
+
+.measure-range h5 {
+  margin: 0 0 10px 0;
+  color: #606266;
+}
+
+.range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.range-inputs .el-input-number {
+  width: 100px;
+}
+
+.range-inputs span {
+  color: #606266;
+}
+
+.score-info {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: #f0f9eb;
+  border-radius: 4px;
+  border: 1px solid #e1f3d8;
+}
+
+.score-info h4 {
+  margin: 0 0 10px 0;
+  color: #67c23a;
+}
+
+.score-info p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #606266;
 }
 </style>
