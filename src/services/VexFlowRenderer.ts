@@ -17,6 +17,9 @@ import type {
   Clef
 } from '../types'
 
+// 浏览器 Canvas 最大尺寸限制
+const MAX_CANVAS_HEIGHT = 32000
+
 export class VexFlowRenderer {
   private renderer: Renderer | null = null
   private context: any = null
@@ -30,113 +33,176 @@ export class VexFlowRenderer {
   initialize(container: HTMLElement, width: number = 800, height: number = 1100): void {
     this.container = container
     this.width = width
-    this.height = height
+    this.height = Math.min(height, MAX_CANVAS_HEIGHT)
     
     container.innerHTML = ''
     
+    console.log('[VexFlowRenderer] 初始化, canvas:', width, 'x', this.height)
+    
     const canvas = document.createElement('canvas')
     canvas.width = width
-    canvas.height = height
+    canvas.height = this.height
     canvas.style.width = `${width}px`
-    canvas.style.height = `${height}px`
+    canvas.style.height = `${this.height}px`
     container.appendChild(canvas)
     
     this.renderer = new Renderer(canvas, Renderer.Backends.CANVAS)
-    this.renderer.resize(width, height)
+    this.renderer.resize(width, this.height)
     this.context = this.renderer.getContext()
-    
-    console.log('[VexFlowRenderer] 初始化完成, canvas:', width, 'x', height)
   }
 
   /**
-   * 渲染多个声部
+   * 渲染多个声部（支持分页）
    */
   renderParts(parts: Part[], config: LayoutConfig): void {
-    if (!this.context) {
+    if (!this.container) {
       throw new Error('渲染器未初始化')
     }
     
-    console.log('[VexFlowRenderer] 开始渲染, 声部数:', parts.length)
+    console.log('[VexFlowRenderer] ========== 开始渲染 ==========')
+    console.log('[VexFlowRenderer] 声部数:', parts.length)
+    console.log('[VexFlowRenderer] 声部详情:', parts.map(p => ({
+      id: p.id,
+      name: p.name,
+      measures: p.measures.length,
+      staves: p.staves
+    })))
     
-    this.context.clear()
+    // 清空容器
+    this.container.innerHTML = ''
     
     const marginLeft = config.marginLeft || 40
     const marginTop = config.marginTop || 50
+    const marginRight = config.marginRight || 40
     const staveSpacing = config.staveSpacing || 80
     const staffSpacing = config.staffSpacing || 60
+    const measuresPerLine = 4
     
-    // 每个小节的宽度
-    const measuresPerLine = 4 // 每行显示4个小节
-    const availableWidth = this.width - marginLeft - (config.marginRight || 40)
+    const availableWidth = this.width - marginLeft - marginRight
     const measureWidth = availableWidth / measuresPerLine
     
-    let currentY = marginTop
+    // 计算每行的高度
+    const lineHeight = this.calculateLineHeight(parts, staveSpacing, staffSpacing)
+    
+    // 计算每页能容纳的行数
+    const linesPerPage = Math.floor((MAX_CANVAS_HEIGHT - marginTop * 2) / lineHeight)
     
     // 获取最大小节数
     const maxMeasures = Math.max(...parts.map(p => p.measures.length))
-    console.log('[VexFlowRenderer] 最大小节数:', maxMeasures)
+    const totalLines = Math.ceil(maxMeasures / measuresPerLine)
     
-    // 按行渲染
-    for (let lineStart = 0; lineStart < maxMeasures; lineStart += measuresPerLine) {
-      const lineEnd = Math.min(lineStart + measuresPerLine, maxMeasures)
-      console.log(`[VexFlowRenderer] 渲染行: 小节 ${lineStart + 1} - ${lineEnd}`)
+    console.log('[VexFlowRenderer] 布局参数:', {
+      measuresPerLine,
+      measureWidth: measureWidth.toFixed(1),
+      lineHeight: lineHeight.toFixed(1),
+      linesPerPage,
+      totalLines,
+      maxMeasures
+    })
+    
+    // 分页渲染
+    let currentPage = 0
+    let lineIndex = 0
+    
+    while (lineIndex < totalLines) {
+      const pageStartLine = lineIndex
+      const pageEndLine = Math.min(lineIndex + linesPerPage, totalLines)
+      const linesOnThisPage = pageEndLine - pageStartLine
+      const canvasHeight = marginTop * 2 + linesOnThisPage * lineHeight
       
-      // 渲染每个声部的这一行
-      for (let partIndex = 0; partIndex < parts.length; partIndex++) {
-        const part = parts[partIndex]
-        console.log(`[VexFlowRenderer] 渲染声部: ${part.name} (${part.id}), 谱表数: ${part.staves}`)
+      console.log(`[VexFlowRenderer] ---- 渲染第 ${currentPage + 1} 页 ----`)
+      console.log(`[VexFlowRenderer] 行范围: ${pageStartLine + 1} - ${pageEndLine}, 行数: ${linesOnThisPage}, canvas高度: ${canvasHeight}`)
+      
+      // 创建新的 Canvas
+      const canvas = document.createElement('canvas')
+      canvas.width = this.width
+      canvas.height = Math.min(canvasHeight, MAX_CANVAS_HEIGHT)
+      canvas.style.width = `${this.width}px`
+      canvas.style.height = `${canvasHeight}px`
+      canvas.style.marginBottom = '20px'
+      canvas.style.display = 'block'
+      this.container.appendChild(canvas)
+      
+      const renderer = new Renderer(canvas, Renderer.Backends.CANVAS)
+      renderer.resize(this.width, canvas.height)
+      const context = renderer.getContext()
+      
+      // 渲染这一页的所有行
+      let currentY = marginTop
+      
+      for (let line = pageStartLine; line < pageEndLine; line++) {
+        const lineStart = line * measuresPerLine
+        const lineEnd = Math.min(lineStart + measuresPerLine, maxMeasures)
         
-        if (part.staves > 1) {
-          // 大谱表（如钢琴）
-          currentY = this.renderGrandStaffLine(
-            part,
-            lineStart,
-            lineEnd,
-            currentY,
-            measureWidth,
-            marginLeft,
-            staffSpacing
-          )
-        } else {
-          // 单谱表
-          currentY = this.renderSingleStaffLine(
-            part,
-            lineStart,
-            lineEnd,
-            currentY,
-            measureWidth,
-            marginLeft
-          )
+        console.log(`[VexFlowRenderer] 渲染行 ${line + 1}: 小节 ${lineStart + 1}-${lineEnd}`)
+        
+        // 渲染每个声部的这一行
+        for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+          const part = parts[partIndex]
+          
+          if (part.staves > 1) {
+            currentY = this.renderGrandStaffLine(
+              context,
+              part,
+              lineStart,
+              lineEnd,
+              currentY,
+              measureWidth,
+              marginLeft,
+              staffSpacing
+            )
+          } else {
+            currentY = this.renderSingleStaffLine(
+              context,
+              part,
+              lineStart,
+              lineEnd,
+              currentY,
+              measureWidth,
+              marginLeft
+            )
+          }
+          
+          // 声部之间添加间距
+          if (partIndex < parts.length - 1) {
+            currentY += staveSpacing
+          }
         }
         
-        // 声部之间添加间距
-        if (partIndex < parts.length - 1) {
-          currentY += staveSpacing
-        }
+        // 行之间添加间距
+        currentY += staveSpacing
       }
       
-      // 行之间添加间距
-      currentY += staveSpacing * 2
+      lineIndex = pageEndLine
+      currentPage++
     }
     
-    // 调整 canvas 高度
-    if (this.container) {
-      const canvas = this.container.querySelector('canvas')
-      if (canvas && currentY + 100 > this.height) {
-        canvas.height = currentY + 100
-        canvas.style.height = `${currentY + 100}px`
-        this.renderer?.resize(this.width, currentY + 100)
-        this.context = this.renderer?.getContext() || this.context
+    console.log(`[VexFlowRenderer] ========== 渲染完成: ${currentPage} 页 ==========`)
+  }
+
+  /**
+   * 计算每行的高度
+   */
+  private calculateLineHeight(parts: Part[], staveSpacing: number, staffSpacing: number): number {
+    let height = 0
+    
+    for (const part of parts) {
+      if (part.staves > 1) {
+        height += staffSpacing + 100 // 大谱表高度
+      } else {
+        height += 100 // 单谱表高度
       }
+      height += staveSpacing // 声部间距
     }
     
-    console.log('[VexFlowRenderer] 渲染完成, 总高度:', currentY)
+    return height
   }
 
   /**
    * 渲染单谱表的一行
    */
   private renderSingleStaffLine(
+    context: any,
     part: Part,
     lineStart: number,
     lineEnd: number,
@@ -144,27 +210,33 @@ export class VexFlowRenderer {
     measureWidth: number,
     marginLeft: number
   ): number {
-    if (!this.context) return startY
+    if (!context) return startY
     
-    const measuresInLine = lineEnd - lineStart
-    const totalWidth = measureWidth * measuresInLine
+    console.log(`[VexFlowRenderer] renderSingleStaffLine: ${part.name}, 小节 ${lineStart}-${lineEnd}, y=${startY}`)
     
-    // 为每个小节创建五线谱和音符
-    let currentX = marginLeft
     const staves: Stave[] = []
     const allVoices: { voice: Voice, staveIndex: number }[] = []
     
+    let currentX = marginLeft
+    
     for (let i = lineStart; i < lineEnd; i++) {
       const measure = part.measures[i]
-      if (!measure) continue
+      if (!measure) {
+        console.log(`[VexFlowRenderer] 警告: 声部 ${part.name} 缺少小节 ${i}`)
+        currentX += measureWidth
+        continue
+      }
+      
+      console.log(`[VexFlowRenderer] 处理小节 ${measure.number}, voices: ${measure.voices?.size || 0}`)
       
       // 创建小节的五线谱
       const stave = new Stave(currentX, startY, measureWidth)
       
       // 只在第一个小节添加谱号、调号、拍号
-      if (i === 0) {
+      if (i === lineStart) {
         const clef = measure.attributes?.clefs?.[0]
         const clefName = this.getClefName(clef)
+        console.log(`[VexFlowRenderer] 添加谱号: ${clefName}`)
         stave.addClef(clefName)
         
         if (measure.attributes?.key) {
@@ -175,14 +247,19 @@ export class VexFlowRenderer {
         }
       }
       
-      stave.setContext(this.context)
+      stave.setContext(context)
       stave.draw()
       staves.push(stave)
       
       // 收集该小节的音符
-      if (measure.voices) {
-        measure.voices.forEach((voice) => {
-          if (!voice.notes || voice.notes.length === 0) return
+      if (measure.voices && measure.voices.size > 0) {
+        measure.voices.forEach((voice, voiceId) => {
+          if (!voice.notes || voice.notes.length === 0) {
+            console.log(`[VexFlowRenderer] 声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId}: 无音符`)
+            return
+          }
+          
+          console.log(`[VexFlowRenderer] 声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId}: ${voice.notes.length} 个音符`)
           
           const vexNotes = this.createVexFlowNotes(voice.notes)
           if (vexNotes.length > 0) {
@@ -196,20 +273,24 @@ export class VexFlowRenderer {
             allVoices.push({ voice: vexVoice, staveIndex: staves.length - 1 })
           }
         })
+      } else {
+        console.log(`[VexFlowRenderer] 声部 ${part.name}, 小节 ${measure.number}: 无 voices`)
       }
       
       currentX += measureWidth
     }
     
     // 格式化并渲染每个小节的音符到对应的五线谱
+    console.log(`[VexFlowRenderer] 渲染 ${allVoices.length} 个 voices`)
+    
     allVoices.forEach(({ voice, staveIndex }) => {
       try {
         const formatter = new Formatter()
         formatter.joinVoices([voice])
         formatter.format([voice], measureWidth - 20)
-        voice.draw(this.context, staves[staveIndex])
+        voice.draw(context, staves[staveIndex])
       } catch (error) {
-        console.warn('渲染音符失败:', error)
+        console.error('[VexFlowRenderer] 渲染音符失败:', error)
       }
     })
     
@@ -220,6 +301,7 @@ export class VexFlowRenderer {
    * 渲染大谱表的一行
    */
   private renderGrandStaffLine(
+    context: any,
     part: Part,
     lineStart: number,
     lineEnd: number,
@@ -228,10 +310,9 @@ export class VexFlowRenderer {
     marginLeft: number,
     staffSpacing: number
   ): number {
-    if (!this.context) return startY
+    if (!context) return startY
     
-    const measuresInLine = lineEnd - lineStart
-    const totalWidth = measureWidth * measuresInLine
+    console.log(`[VexFlowRenderer] renderGrandStaffLine: ${part.name}, 小节 ${lineStart}-${lineEnd}`)
     
     // 获取谱号信息
     const firstMeasure = part.measures[0]
@@ -239,7 +320,6 @@ export class VexFlowRenderer {
     const trebleClef = clefs.find(c => c.sign === 'G') || { sign: 'G', line: 2, number: 1 }
     const bassClef = clefs.find(c => c.sign === 'F') || { sign: 'F', line: 4, number: 2 }
     
-    // 为每个小节创建高音和低音五线谱
     const trebleStaves: Stave[] = []
     const bassStaves: Stave[] = []
     const trebleVoices: { voice: Voice, staveIndex: number }[] = []
@@ -249,11 +329,14 @@ export class VexFlowRenderer {
     
     for (let i = lineStart; i < lineEnd; i++) {
       const measure = part.measures[i]
-      if (!measure) continue
+      if (!measure) {
+        currentX += measureWidth
+        continue
+      }
       
       // 高音谱表
       const trebleStave = new Stave(currentX, startY, measureWidth)
-      if (i === 0) {
+      if (i === lineStart) {
         trebleStave.addClef(this.getClefName(trebleClef))
         if (measure.attributes?.key) {
           trebleStave.addKeySignature(measure.attributes.key)
@@ -262,19 +345,19 @@ export class VexFlowRenderer {
           trebleStave.addTimeSignature(measure.attributes.time)
         }
       }
-      trebleStave.setContext(this.context)
+      trebleStave.setContext(context)
       trebleStave.draw()
       trebleStaves.push(trebleStave)
       
       // 低音谱表
       const bassStave = new Stave(currentX, startY + staffSpacing, measureWidth)
-      if (i === 0) {
+      if (i === lineStart) {
         bassStave.addClef(this.getClefName(bassClef))
         if (measure.attributes?.key) {
           bassStave.addKeySignature(measure.attributes.key)
         }
       }
-      bassStave.setContext(this.context)
+      bassStave.setContext(context)
       bassStave.draw()
       bassStaves.push(bassStave)
       
@@ -307,29 +390,28 @@ export class VexFlowRenderer {
     }
     
     // 绘制花括号
-    this.drawBrace(marginLeft, startY, staffSpacing + 40)
+    this.drawBrace(context, marginLeft, startY, staffSpacing + 40)
     
-    // 渲染高音谱表音符
+    // 渲染音符
     trebleVoices.forEach(({ voice, staveIndex }) => {
       try {
         const formatter = new Formatter()
         formatter.joinVoices([voice])
         formatter.format([voice], measureWidth - 20)
-        voice.draw(this.context, trebleStaves[staveIndex])
+        voice.draw(context, trebleStaves[staveIndex])
       } catch (error) {
-        console.warn('渲染高音谱表音符失败:', error)
+        console.error('[VexFlowRenderer] 渲染高音谱表音符失败:', error)
       }
     })
     
-    // 渲染低音谱表音符
     bassVoices.forEach(({ voice, staveIndex }) => {
       try {
         const formatter = new Formatter()
         formatter.joinVoices([voice])
         formatter.format([voice], measureWidth - 20)
-        voice.draw(this.context, bassStaves[staveIndex])
+        voice.draw(context, bassStaves[staveIndex])
       } catch (error) {
-        console.warn('渲染低音谱表音符失败:', error)
+        console.error('[VexFlowRenderer] 渲染低音谱表音符失败:', error)
       }
     })
     
@@ -339,24 +421,23 @@ export class VexFlowRenderer {
   /**
    * 绘制花括号
    */
-  private drawBrace(x: number, y: number, height: number): void {
-    if (!this.context) return
+  private drawBrace(context: any, x: number, y: number, height: number): void {
+    if (!context) return
     
-    const ctx = this.context
-    ctx.save()
-    ctx.strokeStyle = '#000000'
-    ctx.lineWidth = 2
-    ctx.beginPath()
+    context.save()
+    context.strokeStyle = '#000000'
+    context.lineWidth = 2
+    context.beginPath()
     
     const braceWidth = 15
     const curveWidth = 8
     
-    ctx.moveTo(x - braceWidth, y)
-    ctx.quadraticCurveTo(x - braceWidth + curveWidth, y + height * 0.25, x - braceWidth, y + height * 0.5)
-    ctx.quadraticCurveTo(x - braceWidth - curveWidth, y + height * 0.75, x - braceWidth, y + height)
+    context.moveTo(x - braceWidth, y)
+    context.quadraticCurveTo(x - braceWidth + curveWidth, y + height * 0.25, x - braceWidth, y + height * 0.5)
+    context.quadraticCurveTo(x - braceWidth - curveWidth, y + height * 0.75, x - braceWidth, y + height)
     
-    ctx.stroke()
-    ctx.restore()
+    context.stroke()
+    context.restore()
   }
 
   /**
@@ -379,7 +460,7 @@ export class VexFlowRenderer {
           }
         }
       } catch (error) {
-        console.warn(`无法渲染音符 ${note.id}:`, error)
+        console.warn(`[VexFlowRenderer] 无法渲染音符 ${note.id}:`, error)
       }
     })
     
@@ -409,7 +490,7 @@ export class VexFlowRenderer {
 
       return restNote
     } catch (error) {
-      console.warn(`创建休止符失败: ${note.type}`, error)
+      console.warn(`[VexFlowRenderer] 创建休止符失败: ${note.type}`, error)
       return null
     }
   }
@@ -420,9 +501,10 @@ export class VexFlowRenderer {
   private createSingleVexFlowNote(note: Note): StaveNote | null {
     if (!note || !note.pitch) return null
     
+    // 解析音高
     const pitchMatch = note.pitch.match(/^([A-G])(#{1,2}|b{1,2})?(\d)$/)
     if (!pitchMatch) {
-      console.warn(`无法解析音高: ${note.pitch}`)
+      console.warn(`[VexFlowRenderer] 无法解析音高: ${note.pitch}`)
       return null
     }
     
@@ -432,6 +514,7 @@ export class VexFlowRenderer {
     
     const duration = this.mapNoteDuration(note.type)
     if (!duration) {
+      console.warn(`[VexFlowRenderer] 无法映射时值: ${note.type}`)
       return null
     }
     
@@ -456,7 +539,7 @@ export class VexFlowRenderer {
       
       return vexNote
     } catch (error) {
-      console.warn(`创建音符失败: ${note.pitch}, key: ${key}`, error)
+      console.warn(`[VexFlowRenderer] 创建音符失败: ${note.pitch}, key: ${key}`, error)
       return null
     }
   }
@@ -516,8 +599,8 @@ export class VexFlowRenderer {
    * 清空
    */
   clear(): void {
-    if (this.context) {
-      this.context.clear()
+    if (this.container) {
+      this.container.innerHTML = ''
     }
   }
 
