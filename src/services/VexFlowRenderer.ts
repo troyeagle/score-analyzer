@@ -325,21 +325,25 @@ export class VexFlowRenderer {
   }
 
   /**
-   * 创建 VexFlow 音符
+   * 创建 VexFlow 音符（包括休止符）
    */
   private createVexFlowNotes(notes: Note[]): StaveNote[] {
     const vexNotes: StaveNote[] = []
     
     notes.forEach(note => {
-      if (note.isRest) {
-        // 休止符暂时跳过
-        return
-      }
-      
       try {
-        const vexNote = this.createSingleVexFlowNote(note)
-        if (vexNote) {
-          vexNotes.push(vexNote)
+        if (note.isRest) {
+          // 渲染休止符
+          const restNote = this.createRestNote(note)
+          if (restNote) {
+            vexNotes.push(restNote)
+          }
+        } else {
+          // 渲染音符
+          const vexNote = this.createSingleVexFlowNote(note)
+          if (vexNote) {
+            vexNotes.push(vexNote)
+          }
         }
       } catch (error) {
         console.warn(`无法渲染音符 ${note.id}:`, error)
@@ -350,47 +354,47 @@ export class VexFlowRenderer {
   }
 
   /**
+   * 创建休止符
+   */
+  private createRestNote(note: Note): StaveNote | null {
+    const duration = this.mapNoteDuration(note.type)
+    if (!duration) {
+      console.warn(`无法映射休止符时值: ${note.type}`)
+      return null
+    }
+
+    try {
+      // VexFlow 休止符格式：duration + 'r'
+      const restNote = new StaveNote({
+        keys: ['b/4'], // 休止符需要一个虚拟音高
+        duration: duration + 'r'
+      })
+
+      // 添加附点
+      if (note.dots > 0) {
+        for (let i = 0; i < note.dots; i++) {
+          restNote.addModifier(new Dot())
+        }
+      }
+
+      return restNote
+    } catch (error) {
+      console.warn(`创建休止符失败: ${note.type}`, error)
+      return null
+    }
+  }
+
+  /**
    * 创建单个 VexFlow 音符
    */
   private createSingleVexFlowNote(note: Note): StaveNote | null {
     if (!note || !note.pitch) return null
     
-    const pitchMatch = note.pitch.match(/^([A-G])(b|bb|#|x)?(\d)$/)
+    // 解析音高格式：支持 F##4, F#4, Fb4, Fbb4, F4 等格式
+    const pitchMatch = note.pitch.match(/^([A-G])(#{1,2}|b{1,2})?(\d)$/)
     if (!pitchMatch) {
-      // 尝试解析简化的音高格式
-      const simpleMatch = note.pitch.match(/^([A-G])(\d)$/)
-      if (!simpleMatch) {
-        console.warn(`无法解析音高: ${note.pitch}`)
-        return null
-      }
-      
-      const step = simpleMatch[1].toLowerCase()
-      const octave = simpleMatch[2]
-      const duration = this.mapNoteDuration(note.type)
-      
-      if (!duration) {
-        console.warn(`无法映射时值: ${note.type}`)
-        return null
-      }
-      
-      try {
-        const vexNote = new StaveNote({
-          keys: [`${step}/${octave}`],
-          duration,
-          stem_direction: note.stem === 'down' ? -1 : 1
-        })
-        
-        if (note.dots > 0) {
-          for (let i = 0; i < note.dots; i++) {
-            vexNote.addModifier(new Dot())
-          }
-        }
-        
-        return vexNote
-      } catch (error) {
-        console.warn(`创建音符失败: ${note.pitch}`, error)
-        return null
-      }
+      console.warn(`无法解析音高: ${note.pitch}`)
+      return null
     }
     
     const step = pitchMatch[1].toLowerCase()
@@ -403,8 +407,9 @@ export class VexFlowRenderer {
       return null
     }
     
-    // 构建 key 字符串
-    let key = `${step}${accidental}/${octave}`
+    // VexFlow 音高格式：step + accidental + / + octave
+    // VexFlow 使用 # 表示升号，## 表示重升，b 表示降号，bb 表示重降
+    const key = `${step}${accidental}/${octave}`
     
     try {
       const vexNote = new StaveNote({
@@ -413,18 +418,10 @@ export class VexFlowRenderer {
         stem_direction: note.stem === 'down' ? -1 : 1
       })
       
-      // 添加变音记号
+      // 添加变音记号修饰符
       if (accidental) {
-        const accidentalMap: Record<string, string> = {
-          'b': 'b',
-          'bb': 'bb',
-          '#': '#',
-          'x': '##'
-        }
-        const vexAccidental = accidentalMap[accidental]
-        if (vexAccidental) {
-          vexNote.addModifier(new Accidental(vexAccidental))
-        }
+        // VexFlow 的 Accidental 接受的格式：#, ##, b, bb, n, etc.
+        vexNote.addModifier(new Accidental(accidental))
       }
       
       // 添加附点
@@ -436,7 +433,7 @@ export class VexFlowRenderer {
       
       return vexNote
     } catch (error) {
-      console.warn(`创建音符失败: ${note.pitch}`, error)
+      console.warn(`创建音符失败: ${note.pitch}, key: ${key}`, error)
       return null
     }
   }
