@@ -215,14 +215,17 @@ export class VexFlowRenderer {
     console.log(`[VexFlowRenderer] renderSingleStaffLine: ${part.name}, 小节 ${lineStart}-${lineEnd}, y=${startY}`)
     
     const staves: Stave[] = []
-    const allVoices: { voice: Voice, staveIndex: number }[] = []
+    const allVoices: { voice: Voice, staveIndex: number, measureNum: number, voiceId: number }[] = []
+    
+    // 用于去重的集合
+    const processedVoices = new Set<string>()
     
     let currentX = marginLeft
     
     for (let i = lineStart; i < lineEnd; i++) {
       const measure = part.measures[i]
       if (!measure) {
-        console.log(`[VexFlowRenderer] 警告: 声部 ${part.name} 缺少小节 ${i}`)
+        console.log(`[VexFlowRenderer] 警告: 声部 ${part.name} 缺少小节索引 ${i}`)
         currentX += measureWidth
         continue
       }
@@ -236,7 +239,6 @@ export class VexFlowRenderer {
       if (i === lineStart) {
         const clef = measure.attributes?.clefs?.[0]
         const clefName = this.getClefName(clef)
-        console.log(`[VexFlowRenderer] 添加谱号: ${clefName}`)
         stave.addClef(clefName)
         
         if (measure.attributes?.key) {
@@ -251,9 +253,19 @@ export class VexFlowRenderer {
       stave.draw()
       staves.push(stave)
       
-      // 收集该小节的音符
+      // 收集该小节的音符（带去重）
       if (measure.voices && measure.voices.size > 0) {
         measure.voices.forEach((voice, voiceId) => {
+          // 生成唯一的 voice 标识
+          const voiceKey = `${part.id}_M${measure.number}_V${voiceId}`
+          
+          // 检查是否已处理过
+          if (processedVoices.has(voiceKey)) {
+            console.log(`[VexFlowRenderer] 跳过重复的 voice: ${voiceKey}`)
+            return
+          }
+          processedVoices.add(voiceKey)
+          
           if (!voice.notes || voice.notes.length === 0) {
             console.log(`[VexFlowRenderer] 声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId}: 无音符`)
             return
@@ -261,7 +273,10 @@ export class VexFlowRenderer {
           
           console.log(`[VexFlowRenderer] 声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId}: ${voice.notes.length} 个音符`)
           
-          const vexNotes = this.createVexFlowNotes(voice.notes)
+          // 去重音符
+          const uniqueNotes = this.deduplicateNotes(voice.notes)
+          
+          const vexNotes = this.createVexFlowNotes(uniqueNotes)
           if (vexNotes.length > 0) {
             const timeSignature = measure.attributes?.time || '4/4'
             const vexVoice = new Voice({
@@ -270,7 +285,12 @@ export class VexFlowRenderer {
             })
             vexVoice.setStrict(false)
             vexVoice.addTickables(vexNotes)
-            allVoices.push({ voice: vexVoice, staveIndex: staves.length - 1 })
+            allVoices.push({ 
+              voice: vexVoice, 
+              staveIndex: staves.length - 1,
+              measureNum: measure.number,
+              voiceId 
+            })
           }
         })
       } else {
@@ -283,14 +303,15 @@ export class VexFlowRenderer {
     // 格式化并渲染每个小节的音符到对应的五线谱
     console.log(`[VexFlowRenderer] 渲染 ${allVoices.length} 个 voices`)
     
-    allVoices.forEach(({ voice, staveIndex }) => {
+    allVoices.forEach(({ voice, staveIndex, measureNum, voiceId }) => {
       try {
         const formatter = new Formatter()
         formatter.joinVoices([voice])
         formatter.format([voice], measureWidth - 20)
         voice.draw(context, staves[staveIndex])
+        console.log(`[VexFlowRenderer] 成功渲染: 小节${measureNum}, voice${voiceId}, staveIndex${staveIndex}`)
       } catch (error) {
-        console.error('[VexFlowRenderer] 渲染音符失败:', error)
+        console.error(`[VexFlowRenderer] 渲染音符失败: 小节${measureNum}, voice${voiceId}`, error)
       }
     })
     
@@ -322,17 +343,23 @@ export class VexFlowRenderer {
     
     const trebleStaves: Stave[] = []
     const bassStaves: Stave[] = []
-    const trebleVoices: { voice: Voice, staveIndex: number }[] = []
-    const bassVoices: { voice: Voice, staveIndex: number }[] = []
+    const trebleVoices: { voice: Voice, staveIndex: number, measureNum: number, voiceId: number }[] = []
+    const bassVoices: { voice: Voice, staveIndex: number, measureNum: number, voiceId: number }[] = []
+    
+    // 用于去重的集合
+    const processedVoices = new Set<string>()
     
     let currentX = marginLeft
     
     for (let i = lineStart; i < lineEnd; i++) {
       const measure = part.measures[i]
       if (!measure) {
+        console.log(`[VexFlowRenderer] 警告: 声部 ${part.name} 缺少小节索引 ${i}`)
         currentX += measureWidth
         continue
       }
+      
+      console.log(`[VexFlowRenderer] 处理大谱表小节 ${measure.number}, voices: ${measure.voices?.size || 0}`)
       
       // 高音谱表
       const trebleStave = new Stave(currentX, startY, measureWidth)
@@ -361,12 +388,27 @@ export class VexFlowRenderer {
       bassStave.draw()
       bassStaves.push(bassStave)
       
-      // 收集音符
+      // 收集音符（带去重）
       if (measure.voices) {
-        measure.voices.forEach((voice) => {
+        measure.voices.forEach((voice, voiceId) => {
+          // 生成唯一的 voice 标识
+          const voiceKey = `${part.id}_M${measure.number}_V${voiceId}_S${voice.staff}`
+          
+          // 检查是否已处理过
+          if (processedVoices.has(voiceKey)) {
+            console.log(`[VexFlowRenderer] 跳过重复的 voice: ${voiceKey}`)
+            return
+          }
+          processedVoices.add(voiceKey)
+          
           if (!voice.notes || voice.notes.length === 0) return
           
-          const vexNotes = this.createVexFlowNotes(voice.notes)
+          console.log(`[VexFlowRenderer] 大谱表声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId} (staff ${voice.staff}): ${voice.notes.length} 个音符`)
+          
+          // 去重音符
+          const uniqueNotes = this.deduplicateNotes(voice.notes)
+          
+          const vexNotes = this.createVexFlowNotes(uniqueNotes)
           if (vexNotes.length > 0) {
             const timeSignature = measure.attributes?.time || '4/4'
             const vexVoice = new Voice({
@@ -378,9 +420,9 @@ export class VexFlowRenderer {
             
             const staveIndex = trebleStaves.length - 1
             if (voice.staff === 2) {
-              bassVoices.push({ voice: vexVoice, staveIndex })
+              bassVoices.push({ voice: vexVoice, staveIndex, measureNum: measure.number, voiceId })
             } else {
-              trebleVoices.push({ voice: vexVoice, staveIndex })
+              trebleVoices.push({ voice: vexVoice, staveIndex, measureNum: measure.number, voiceId })
             }
           }
         })
@@ -392,26 +434,31 @@ export class VexFlowRenderer {
     // 绘制花括号
     this.drawBrace(context, marginLeft, startY, staffSpacing + 40)
     
-    // 渲染音符
-    trebleVoices.forEach(({ voice, staveIndex }) => {
+    // 渲染高音谱表音符
+    console.log(`[VexFlowRenderer] 渲染 ${trebleVoices.length} 个高音谱表 voices`)
+    trebleVoices.forEach(({ voice, staveIndex, measureNum, voiceId }) => {
       try {
         const formatter = new Formatter()
         formatter.joinVoices([voice])
         formatter.format([voice], measureWidth - 20)
         voice.draw(context, trebleStaves[staveIndex])
+        console.log(`[VexFlowRenderer] 成功渲染高音谱表: 小节${measureNum}, voice${voiceId}`)
       } catch (error) {
-        console.error('[VexFlowRenderer] 渲染高音谱表音符失败:', error)
+        console.error(`[VexFlowRenderer] 渲染高音谱表音符失败: 小节${measureNum}, voice${voiceId}`, error)
       }
     })
     
-    bassVoices.forEach(({ voice, staveIndex }) => {
+    // 渲染低音谱表音符
+    console.log(`[VexFlowRenderer] 渲染 ${bassVoices.length} 个低音谱表 voices`)
+    bassVoices.forEach(({ voice, staveIndex, measureNum, voiceId }) => {
       try {
         const formatter = new Formatter()
         formatter.joinVoices([voice])
         formatter.format([voice], measureWidth - 20)
         voice.draw(context, bassStaves[staveIndex])
+        console.log(`[VexFlowRenderer] 成功渲染低音谱表: 小节${measureNum}, voice${voiceId}`)
       } catch (error) {
-        console.error('[VexFlowRenderer] 渲染低音谱表音符失败:', error)
+        console.error(`[VexFlowRenderer] 渲染低音谱表音符失败: 小节${measureNum}, voice${voiceId}`, error)
       }
     })
     
@@ -438,6 +485,33 @@ export class VexFlowRenderer {
     
     context.stroke()
     context.restore()
+  }
+
+  /**
+   * 去重音符
+   */
+  private deduplicateNotes(notes: Note[]): Note[] {
+    const seen = new Set<string>()
+    const uniqueNotes: Note[] = []
+    
+    notes.forEach(note => {
+      // 生成唯一标识
+      let key: string
+      if (note.isRest) {
+        key = `rest_${note.type}_${note.duration}`
+      } else {
+        key = `${note.pitch}_${note.type}_${note.duration}_${note.isChord}`
+      }
+      
+      if (!seen.has(key)) {
+        seen.add(key)
+        uniqueNotes.push(note)
+      } else {
+        console.log(`[VexFlowRenderer] 去重音符: ${key}`)
+      }
+    })
+    
+    return uniqueNotes
   }
 
   /**

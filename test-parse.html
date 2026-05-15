@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MusicXML 解析测试</title>
+</head>
+<body>
+  <h1>MusicXML 解析测试</h1>
+  <input type="file" id="fileInput" accept=".xml,.musicxml" />
+  <pre id="output"></pre>
+  
+  <script type="module">
+    import { MusicXMLParser } from './src/services/MusicXMLParser.ts'
+    
+    const fileInput = document.getElementById('fileInput')
+    const output = document.getElementById('output')
+    
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0]
+      if (!file) return
+      
+      const parser = new MusicXMLParser()
+      parser.setDebug(true)
+      
+      try {
+        const result = await parser.parse(file, 1, 10)
+        
+        let text = '=== 解析结果 ===\n'
+        text += `声部数: ${result.parts.length}\n\n`
+        
+        result.parts.forEach(part => {
+          text += `声部: ${part.name} (${part.id})\n`
+          text += `  谱表数: ${part.staves}\n`
+          text += `  小节数: ${part.measures.length}\n`
+          
+          part.measures.forEach(measure => {
+            text += `\n  小节 ${measure.number}:\n`
+            text += `    voices数量: ${measure.voices.size}\n`
+            
+            measure.voices.forEach((voice, voiceId) => {
+              text += `    voice ${voiceId} (staff ${voice.staff}): ${voice.notes.length} 个音符\n`
+              
+              const noteDetails = voice.notes.map(note => {
+                if (note.isRest) return '休止'
+                return note.pitch
+              })
+              text += `      音符: ${noteDetails.join(', ')}\n`
+            })
+          })
+          
+          text += '\n'
+        })
+        
+        output.textContent = text
+      } catch (error) {
+        output.textContent = '解析失败: ' + error.message
+      }
+    })
+  </script>
+</body>
+</html>
