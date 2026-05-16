@@ -273,10 +273,7 @@ export class VexFlowRenderer {
           
           console.log(`[VexFlowRenderer] 声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId}: ${voice.notes.length} 个音符`)
           
-          // 去重音符
-          const uniqueNotes = this.deduplicateNotes(voice.notes)
-          
-          const vexNotes = this.createVexFlowNotes(uniqueNotes)
+          const vexNotes = this.createVexFlowNotes(voice.notes)
           if (vexNotes.length > 0) {
             const timeSignature = measure.attributes?.time || '4/4'
             const vexVoice = new Voice({
@@ -405,10 +402,7 @@ export class VexFlowRenderer {
           
           console.log(`[VexFlowRenderer] 大谱表声部 ${part.name}, 小节 ${measure.number}, voice ${voiceId} (staff ${voice.staff}): ${voice.notes.length} 个音符`)
           
-          // 去重音符
-          const uniqueNotes = this.deduplicateNotes(voice.notes)
-          
-          const vexNotes = this.createVexFlowNotes(uniqueNotes)
+          const vexNotes = this.createVexFlowNotes(voice.notes)
           if (vexNotes.length > 0) {
             const timeSignature = measure.attributes?.time || '4/4'
             const vexVoice = new Voice({
@@ -485,33 +479,6 @@ export class VexFlowRenderer {
     
     context.stroke()
     context.restore()
-  }
-
-  /**
-   * 去重音符
-   */
-  private deduplicateNotes(notes: Note[]): Note[] {
-    const seen = new Set<string>()
-    const uniqueNotes: Note[] = []
-    
-    notes.forEach(note => {
-      // 生成唯一标识
-      let key: string
-      if (note.isRest) {
-        key = `rest_${note.type}_${note.duration}`
-      } else {
-        key = `${note.pitch}_${note.type}_${note.duration}_${note.isChord}`
-      }
-      
-      if (!seen.has(key)) {
-        seen.add(key)
-        uniqueNotes.push(note)
-      } else {
-        console.log(`[VexFlowRenderer] 去重音符: ${key}`)
-      }
-    })
-    
-    return uniqueNotes
   }
 
   /**
