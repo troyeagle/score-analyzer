@@ -12,11 +12,14 @@
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore"
   },
   "dependencies": {
+    "abcjs": "^6.6.3",
     "element-plus": "^2.3.8",
     "jspdf": "^2.5.1",
+    "opensheetmusicdisplay": "^1.9.9",
     "pinia": "^2.1.4",
     "puppeteer-core": "^21.0.0",
     "uuid": "^14.0.0",
+    "verovio": "^6.1.0",
     "vexflow": "^5.0.0",
     "vue": "^3.3.4",
     "vue-router": "^4.2.4"

@@ -70,16 +70,34 @@
                       controls-position="right"
                     />
                   </div>
-                  <el-button 
-                    type="primary" 
-                    size="small" 
-                    @click="handleParseAndRender"
-                    :loading="parsing"
-                    style="margin-top: 10px; width: 100%;"
-                  >
-                    解析并渲染
-                  </el-button>
                 </div>
+                
+                <!-- 渲染器选择 -->
+                <div class="renderer-selection">
+                  <h5>渲染引擎：</h5>
+                  <el-radio-group v-model="selectedRenderer" size="small">
+                    <el-radio-button 
+                      v-for="renderer in availableRenderers" 
+                      :key="renderer.id" 
+                      :label="renderer.id"
+                    >
+                      {{ renderer.name }}
+                    </el-radio-button>
+                  </el-radio-group>
+                  <div class="renderer-desc">
+                    {{ getRendererDesc(selectedRenderer) }}
+                  </div>
+                </div>
+                
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  @click="handleParseAndRender"
+                  :loading="parsing"
+                  style="margin-top: 10px; width: 100%;"
+                >
+                  解析并渲染
+                </el-button>
               </div>
               
               <!-- 解析后的乐谱信息 -->
@@ -236,6 +254,10 @@ import { useScoreStore } from '../stores/score'
 import { musicXMLParser } from '../services/MusicXMLParser'
 import { layoutEngine } from '../services/LayoutEngine'
 import { vexFlowRenderer } from '../services/VexFlowRenderer'
+import { RendererFactory } from '../services/renderers'
+import '../services/renderers/OSMDRenderer'
+import '../services/renderers/VerovioRenderer'
+import '../services/renderers/AbcjsRenderer'
 import type { LayoutConfig, Part } from '../types'
 
 const scoreStore = useScoreStore()
@@ -247,6 +269,11 @@ const zoomLevel = ref(100)
 const isRendering = ref(false)
 const parsing = ref(false)
 const selectedFile = ref<File | null>(null)
+
+// 渲染器相关
+const selectedRenderer = ref('osmd')
+const availableRenderers = RendererFactory.getAvailableRenderers()
+const currentRendererInstance = ref<any>(null)
 
 // 文件元信息
 const fileInfo = ref<{
@@ -285,6 +312,12 @@ const formatFileSize = (bytes: number): string => {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+// 获取渲染器描述
+const getRendererDesc = (rendererId: string): string => {
+  const renderer = availableRenderers.find(r => r.id === rendererId)
+  return renderer?.description || ''
 }
 
 // 处理文件选择（只读取元信息）
@@ -376,26 +409,41 @@ const readFileContent = (file: File): Promise<string> => {
 
 // 解析并渲染指定范围
 const handleParseAndRender = async () => {
-  if (!selectedFile.value) return
+  if (!selectedFile.value || !scoreOutput.value) return
   
   parsing.value = true
   
   try {
     console.log('=== 开始解析指定范围 ===')
     console.log('范围:', parseRange.start, '-', parseRange.end)
+    console.log('渲染器:', selectedRenderer.value)
     
     const content = await readFileContent(selectedFile.value)
     
-    // 使用指定范围解析
-    musicXMLParser.setDebug(true)
-    const parseResult = await musicXMLParser.parse(selectedFile.value, parseRange.start, parseRange.end)
+    // 销毁之前的渲染器
+    if (currentRendererInstance.value) {
+      currentRendererInstance.value.destroy()
+      currentRendererInstance.value = null
+    }
     
-    console.log('=== 范围解析结果 ===')
-    console.log('声部数量:', parseResult.parts.length)
-    console.log('每个声部的小节数:', parseResult.parts.map(p => `${p.name}: ${p.measures.length}`))
+    // 创建新的渲染器
+    const renderer = RendererFactory.create(selectedRenderer.value)
+    if (!renderer) {
+      throw new Error(`渲染器 ${selectedRenderer.value} 不存在`)
+    }
     
-    await scoreStore.loadScore(parseResult)
-    await renderScore()
+    currentRendererInstance.value = renderer
+    
+    // 初始化渲染器
+    await renderer.initialize(scoreOutput.value)
+    
+    // 加载 MusicXML
+    await renderer.loadMusicXML(content)
+    
+    // 渲染
+    await renderer.render()
+    
+    console.log('=== 渲染完成 ===')
     
   } catch (error) {
     console.error('解析失败:', error)
@@ -732,5 +780,31 @@ onUnmounted(() => {
   margin: 4px 0;
   font-size: 13px;
   color: #606266;
+}
+
+.renderer-selection {
+  margin-top: 15px;
+  padding: 10px;
+  background-color: #fff;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+}
+
+.renderer-selection h5 {
+  margin: 0 0 10px 0;
+  color: #606266;
+}
+
+.renderer-selection .el-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.renderer-desc {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 </style>
