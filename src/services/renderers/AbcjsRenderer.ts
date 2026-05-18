@@ -28,8 +28,6 @@ export class AbcjsRenderer implements ScoreRenderer {
     }
 
     try {
-      // abcjs 的 MusicXML 支持有限，需要转换
-      // 这里我们使用一个简化的转换
       this.abcString = this.convertMusicXMLToABC(xml)
       console.log('[abcjs] MusicXML 转换完成')
     } catch (error) {
@@ -47,13 +45,26 @@ export class AbcjsRenderer implements ScoreRenderer {
       this.container.innerHTML = ''
       
       if (this.abcString) {
-        // 获取容器宽度
-        const containerWidth = this.container.clientWidth || 800
+        // 创建可滚动的外层容器
+        const scrollWrapper = document.createElement('div')
+        scrollWrapper.style.overflowX = 'auto'
+        scrollWrapper.style.overflowY = 'hidden'
+        scrollWrapper.style.width = '100%'
+        scrollWrapper.style.padding = '10px 0'
         
-        this.abcjs.renderAbc(this.container, this.abcString, {
-          responsive: 'resize',
+        // 创建内部渲染区域，设置足够宽
+        const renderArea = document.createElement('div')
+        renderArea.style.width = '4000px'
+        renderArea.style.minHeight = '200px'
+        
+        scrollWrapper.appendChild(renderArea)
+        this.container.appendChild(scrollWrapper)
+        
+        // 渲染到内部区域，不使用 responsive，使用固定宽度
+        this.abcjs.renderAbc(renderArea, this.abcString, {
+          responsive: undefined,
           add_classes: true,
-          staffwidth: containerWidth - 40,
+          staffwidth: 3800,
           scale: 1.0,
           paddingtop: 20,
           paddingbottom: 20,
@@ -70,17 +81,13 @@ export class AbcjsRenderer implements ScoreRenderer {
   }
 
   private convertMusicXMLToABC(xml: string): string {
-    // 简化的 MusicXML 到 ABC 转换
-    // 注意：这是一个基本的转换，复杂的 MusicXML 可能无法完整转换
     try {
       const parser = new DOMParser()
       const doc = parser.parseFromString(xml, 'text/xml')
       
-      // 提取基本信息
       const title = doc.querySelector('work-title')?.textContent || 'Untitled'
       const composer = doc.querySelector('creator[type="composer"]')?.textContent || ''
       
-      // 提取调号
       const keyElement = doc.querySelector('key')
       let key = 'C'
       if (keyElement) {
@@ -89,7 +96,6 @@ export class AbcjsRenderer implements ScoreRenderer {
         key = this.fifthsToKey(fifths, mode)
       }
       
-      // 提取拍号
       const timeElement = doc.querySelector('time')
       let meter = '4/4'
       if (timeElement) {
@@ -98,7 +104,6 @@ export class AbcjsRenderer implements ScoreRenderer {
         meter = `${beats}/${beatType}`
       }
       
-      // 构建 ABC 字符串
       let abc = `X:1\n`
       abc += `T:${title}\n`
       if (composer) {
@@ -108,7 +113,6 @@ export class AbcjsRenderer implements ScoreRenderer {
       abc += `L:1/8\n`
       abc += `K:${key}\n`
       
-      // 提取音符（简化版本）
       const notes = doc.querySelectorAll('note')
       let noteString = ''
       
@@ -155,12 +159,12 @@ export class AbcjsRenderer implements ScoreRenderer {
 
   private durationToABC(duration: string): string {
     const durationMap: Record<string, string> = {
-      '1024': '8',  // whole
-      '512': '4',   // half
-      '256': '2',   // quarter
-      '128': '',    // eighth (default)
-      '64': '/2',   // 16th
-      '32': '/4'    // 32nd
+      '1024': '8',
+      '512': '4',
+      '256': '2',
+      '128': '',
+      '64': '/2',
+      '32': '/4'
     }
     return durationMap[duration] || ''
   }
@@ -175,5 +179,4 @@ export class AbcjsRenderer implements ScoreRenderer {
   }
 }
 
-// 注册到工厂
 RendererFactory.register('abcjs', () => new AbcjsRenderer())
