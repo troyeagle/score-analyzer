@@ -47,10 +47,14 @@ export class AbcjsRenderer implements ScoreRenderer {
       this.container.innerHTML = ''
       
       if (this.abcString) {
+        // 获取容器宽度
+        const containerWidth = this.container.clientWidth || 800
+        
         this.abcjs.renderAbc(this.container, this.abcString, {
           responsive: 'resize',
           add_classes: true,
-          staffwidth: 800,
+          staffwidth: containerWidth - 40,
+          scale: 1.0,
           paddingtop: 20,
           paddingbottom: 20,
           paddingleft: 20,

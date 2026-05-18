@@ -15,9 +15,34 @@ export class VerovioRenderer implements ScoreRenderer {
     container.innerHTML = ''
 
     try {
-      const verovio = await import('verovio')
-      await verovio.default()
-      this.toolkit = new verovio.VerovioToolkit({
+      const verovioModule = await import('verovio')
+      
+      // verovio 模块可能有多种导出方式
+      // 方式1: default export 是初始化函数
+      // 方式2: 导出 createVerovio 函数
+      // 方式3: 导出 VerovioToolkit 类（需要 wasm 初始化）
+      
+      let createVerovio: (() => Promise<void>) | null = null
+      
+      if (typeof verovioModule.default === 'function') {
+        createVerovio = verovioModule.default
+      } else if (typeof verovioModule.createVerovio === 'function') {
+        createVerovio = verovioModule.createVerovio
+      }
+      
+      // 如果有初始化函数，先调用
+      if (createVerovio) {
+        await createVerovio()
+      }
+      
+      // 获取 VerovioToolkit 构造函数
+      const VerovioToolkit = verovioModule.VerovioToolkit || verovioModule.default?.VerovioToolkit
+      
+      if (!VerovioToolkit) {
+        throw new Error('无法找到 VerovioToolkit 构造函数')
+      }
+      
+      this.toolkit = new VerovioToolkit({
         scale: 40,
         pageWidth: 1200,
         pageHeight: 1600,
@@ -27,6 +52,7 @@ export class VerovioRenderer implements ScoreRenderer {
         spacingNonLinear: 0.3,
         font: 'Leipzig'
       })
+      
       console.log('[Verovio] 初始化成功')
     } catch (error) {
       console.error('[Verovio] 初始化失败:', error)
@@ -68,6 +94,15 @@ export class VerovioRenderer implements ScoreRenderer {
         pageDiv.className = 'verovio-page'
         pageDiv.innerHTML = svg
         pageDiv.style.marginBottom = '20px'
+        
+        // 确保 SVG 有正确的尺寸
+        const svgElement = pageDiv.querySelector('svg')
+        if (svgElement) {
+          svgElement.style.width = '100%'
+          svgElement.style.height = 'auto'
+          svgElement.style.maxWidth = '1200px'
+        }
+        
         this.container.appendChild(pageDiv)
       }
       
