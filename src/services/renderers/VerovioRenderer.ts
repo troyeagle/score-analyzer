@@ -15,34 +15,25 @@ export class VerovioRenderer implements ScoreRenderer {
     container.innerHTML = ''
 
     try {
-      const verovioModule = await import('verovio')
+      // verovio 的正确初始化方式：
+      // 1. import('verovio/wasm') 获取 WASM 模块加载器
+      // 2. import('verovio/esm') 获取 VerovioToolkit 构造函数
+      // 3. 调用加载器获取模块实例
+      // 4. 将模块实例传给构造函数
       
-      // verovio 模块可能有多种导出方式
-      // 方式1: default export 是初始化函数
-      // 方式2: 导出 createVerovio 函数
-      // 方式3: 导出 VerovioToolkit 类（需要 wasm 初始化）
+      const [wasmModule, esmModule] = await Promise.all([
+        import('verovio/wasm'),
+        import('verovio/esm')
+      ])
       
-      let createVerovio: (() => Promise<void>) | null = null
+      // 初始化 WASM 模块
+      const VerovioModule = await wasmModule.default()
       
-      if (typeof verovioModule.default === 'function') {
-        createVerovio = verovioModule.default
-      } else if (typeof verovioModule.createVerovio === 'function') {
-        createVerovio = verovioModule.createVerovio
-      }
+      // 创建 toolkit 实例
+      this.toolkit = new esmModule.VerovioToolkit(VerovioModule)
       
-      // 如果有初始化函数，先调用
-      if (createVerovio) {
-        await createVerovio()
-      }
-      
-      // 获取 VerovioToolkit 构造函数
-      const VerovioToolkit = verovioModule.VerovioToolkit || verovioModule.default?.VerovioToolkit
-      
-      if (!VerovioToolkit) {
-        throw new Error('无法找到 VerovioToolkit 构造函数')
-      }
-      
-      this.toolkit = new VerovioToolkit({
+      // 设置默认选项
+      this.toolkit.setOptions({
         scale: 40,
         pageWidth: 1200,
         pageHeight: 1600,
@@ -114,6 +105,9 @@ export class VerovioRenderer implements ScoreRenderer {
   }
 
   destroy(): void {
+    if (this.toolkit) {
+      this.toolkit.destroy()
+    }
     if (this.container) {
       this.container.innerHTML = ''
     }
