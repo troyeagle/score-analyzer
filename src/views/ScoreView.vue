@@ -232,7 +232,7 @@
               </div>
             </template>
             <div class="score-container" ref="scoreContainer">
-              <div v-if="!scoreStore.isLoaded" class="empty-state">
+              <div v-if="!selectedFile && !scoreStore.isLoaded" class="empty-state">
                 <el-empty description="请导入MusicXML文件开始分析" />
               </div>
               <div v-else class="score-content">
