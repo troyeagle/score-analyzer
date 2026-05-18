@@ -68,10 +68,6 @@ export interface PartGroup {
 export interface MusicXMLParseResult {
   metadata: ScoreMetadata
   parts: Part[]
-  // 为了兼容性保留这些字段
-  measures?: Measure[]
-  notes?: Note[]
-  annotations?: Annotation[]
 }
 
 // 声部
