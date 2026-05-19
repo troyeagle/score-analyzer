@@ -9,6 +9,7 @@ export class VerovioRenderer implements ScoreRenderer {
   private container: HTMLElement | null = null
   private currentPage: number = 1
   private totalPages: number = 1
+  private versePositionMap: Map<string, number> = new Map()  // verse number -> position index
 
   async initialize(container: HTMLElement): Promise<void> {
     this.container = container
@@ -57,7 +58,10 @@ export class VerovioRenderer implements ScoreRenderer {
     }
 
     try {
-      const success = this.toolkit.loadData(xml)
+      // 解析歌词行号并预处理 XML
+      const processedXml = this.parseVerseNumbers(xml)
+      
+      const success = this.toolkit.loadData(processedXml)
       if (!success) {
         throw new Error('MusicXML 加载失败')
       }
@@ -68,6 +72,69 @@ export class VerovioRenderer implements ScoreRenderer {
       console.error('[Verovio] MusicXML 加载失败:', error)
       throw error
     }
+  }
+
+  /**
+   * 解析 MusicXML 中的歌词行号
+   * 建立 verse number -> position 的映射
+   * 并预处理 XML 确保每个音符都有完整的 verse 列表
+   */
+  private parseVerseNumbers(xml: string): string {
+    this.versePositionMap.clear()
+
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(xml, 'text/xml')
+
+    // 第一步：收集所有不同的 verse number
+    const allVerseNumbers = new Set<string>()
+    doc.querySelectorAll('lyric').forEach(lyric => {
+      const number = lyric.getAttribute('number')
+      if (number) {
+        allVerseNumbers.add(number)
+      }
+    })
+
+    // 第二步：对 verse number 排序，建立 position 映射
+    const sortedVerses = Array.from(allVerseNumbers).sort()
+    sortedVerses.forEach((verse, index) => {
+      this.versePositionMap.set(verse, index)
+    })
+
+    console.log('[Verovio] verse position map:', Object.fromEntries(this.versePositionMap))
+
+    // 第三步：为每个音符补充缺失的 verse
+    // 确保所有音符都有相同数量的 verse，这样 Verovio 渲染时位置一致
+    doc.querySelectorAll('note').forEach(note => {
+      const existingVerses = new Set<string>()
+      note.querySelectorAll('lyric').forEach(lyric => {
+        const number = lyric.getAttribute('number')
+        if (number) {
+          existingVerses.add(number)
+        }
+      })
+
+      // 为缺失的 verse 添加占位符
+      sortedVerses.forEach(verseNumber => {
+        if (!existingVerses.has(verseNumber)) {
+          const placeholder = doc.createElement('lyric')
+          placeholder.setAttribute('number', verseNumber)
+          placeholder.setAttribute('default-y', '-80')
+          
+          const syllabic = doc.createElement('syllabic')
+          syllabic.textContent = 'single'
+          placeholder.appendChild(syllabic)
+          
+          const text = doc.createElement('text')
+          text.textContent = '\u200B'  // 零宽空格
+          placeholder.appendChild(text)
+          
+          note.appendChild(placeholder)
+        }
+      })
+    })
+
+    const serializer = new XMLSerializer()
+    return serializer.serializeToString(doc)
   }
 
   /**
