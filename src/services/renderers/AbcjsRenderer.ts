@@ -29,7 +29,7 @@ export class AbcjsRenderer implements ScoreRenderer {
 
     try {
       this.abcString = this.convertMusicXMLToABC(xml)
-      console.log('[abcjs] MusicXML 转换完成')
+      console.log('[abcjs] MusicXML 转换完成, ABC长度:', this.abcString.length)
     } catch (error) {
       console.error('[abcjs] MusicXML 转换失败:', error)
       throw error
@@ -45,31 +45,27 @@ export class AbcjsRenderer implements ScoreRenderer {
       this.container.innerHTML = ''
       
       if (this.abcString) {
-        // 创建可滚动的外层容器
-        const scrollWrapper = document.createElement('div')
-        scrollWrapper.style.overflowX = 'auto'
-        scrollWrapper.style.overflowY = 'hidden'
-        scrollWrapper.style.width = '100%'
-        scrollWrapper.style.padding = '10px 0'
-        
-        // 创建内部渲染区域，设置足够宽
+        // 创建渲染区域
         const renderArea = document.createElement('div')
-        renderArea.style.width = '4000px'
+        renderArea.style.width = '100%'
         renderArea.style.minHeight = '200px'
+        this.container.appendChild(renderArea)
         
-        scrollWrapper.appendChild(renderArea)
-        this.container.appendChild(scrollWrapper)
-        
-        // 渲染到内部区域，不使用 responsive，使用固定宽度
+        // 渲染 ABC
         this.abcjs.renderAbc(renderArea, this.abcString, {
-          responsive: undefined,
+          responsive: 'resize',
           add_classes: true,
-          staffwidth: 3800,
+          staffwidth: 700,
           scale: 1.0,
           paddingtop: 20,
           paddingbottom: 20,
-          paddingleft: 20,
-          paddingright: 20
+          paddingleft: 10,
+          paddingright: 10,
+          wrap: {
+            minSpacing: 1.5,
+            maxSpacing: 2.7,
+            lastLineLimit: false
+          }
         })
       }
       
@@ -85,9 +81,11 @@ export class AbcjsRenderer implements ScoreRenderer {
       const parser = new DOMParser()
       const doc = parser.parseFromString(xml, 'text/xml')
       
+      // 提取元数据
       const title = doc.querySelector('work-title')?.textContent || 'Untitled'
       const composer = doc.querySelector('creator[type="composer"]')?.textContent || ''
       
+      // 提取调号
       const keyElement = doc.querySelector('key')
       let key = 'C'
       if (keyElement) {
@@ -96,6 +94,7 @@ export class AbcjsRenderer implements ScoreRenderer {
         key = this.fifthsToKey(fifths, mode)
       }
       
+      // 提取拍号
       const timeElement = doc.querySelector('time')
       let meter = '4/4'
       if (timeElement) {
@@ -104,6 +103,7 @@ export class AbcjsRenderer implements ScoreRenderer {
         meter = `${beats}/${beatType}`
       }
       
+      // 构建 ABC 头部
       let abc = `X:1\n`
       abc += `T:${title}\n`
       if (composer) {
@@ -113,39 +113,59 @@ export class AbcjsRenderer implements ScoreRenderer {
       abc += `L:1/8\n`
       abc += `K:${key}\n`
       
-      const notes = doc.querySelectorAll('note')
-      let noteString = ''
+      // 提取所有小节
+      const measures = doc.querySelectorAll('measure')
+      let measureCount = 0
       
-      notes.forEach(note => {
-        const rest = note.querySelector('rest')
-        if (rest) {
-          const duration = note.querySelector('duration')?.textContent || '1'
-          noteString += `z${this.durationToABC(duration)} `
-        } else {
-          const pitch = note.querySelector('pitch')
-          if (pitch) {
-            const step = pitch.querySelector('step')?.textContent || 'C'
-            const octave = parseInt(pitch.querySelector('octave')?.textContent || '4')
-            const alter = parseInt(pitch.querySelector('alter')?.textContent || '0')
+      measures.forEach((measure) => {
+        const notes = measure.querySelectorAll('note')
+        let measureStr = ''
+        
+        notes.forEach(note => {
+          const rest = note.querySelector('rest')
+          if (rest) {
             const duration = note.querySelector('duration')?.textContent || '1'
-            
-            let abcNote = step.toLowerCase()
-            if (alter > 0) abcNote = '^' + abcNote
-            if (alter < 0) abcNote = '_' + abcNote
-            if (octave > 4) abcNote = abcNote + "'".repeat(octave - 4)
-            if (octave < 4) abcNote = abcNote + ','.repeat(4 - octave)
-            
-            noteString += `${abcNote}${this.durationToABC(duration)} `
+            measureStr += `z${this.durationToABC(duration)} `
+          } else {
+            const pitch = note.querySelector('pitch')
+            if (pitch) {
+              const step = pitch.querySelector('step')?.textContent || 'C'
+              const octave = parseInt(pitch.querySelector('octave')?.textContent || '4')
+              const alter = parseInt(pitch.querySelector('alter')?.textContent || '0')
+              const duration = note.querySelector('duration')?.textContent || '1'
+              
+              let abcNote = step.toLowerCase()
+              if (alter > 0) abcNote = '^' + abcNote
+              if (alter < 0) abcNote = '_' + abcNote
+              if (octave > 4) abcNote = abcNote + "'".repeat(octave - 4)
+              if (octave < 4) abcNote = abcNote + ','.repeat(4 - octave)
+              
+              measureStr += `${abcNote}${this.durationToABC(duration)} `
+            }
+          }
+        })
+        
+        // 添加小节内容和小节线
+        if (measureStr.trim()) {
+          abc += measureStr.trim() + ' | '
+          measureCount++
+          
+          // 每 4 小节换行
+          if (measureCount % 4 === 0) {
+            abc += '\n'
           }
         }
       })
       
-      abc += noteString
+      // 确保最后有结束线
+      if (!abc.trim().endsWith('|]') && !abc.trim().endsWith('||')) {
+        abc += '|]'
+      }
       
       return abc
     } catch (error) {
       console.error('MusicXML 转换失败:', error)
-      return 'X:1\nT:Error\nM:4/4\nL:1/8\nK:C\nz8 | z8 |'
+      return 'X:1\nT:Error\nM:4/4\nL:1/8\nK:C\nz8 | z8 |]'
     }
   }
 

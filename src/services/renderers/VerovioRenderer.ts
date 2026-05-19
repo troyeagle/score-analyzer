@@ -15,33 +15,33 @@ export class VerovioRenderer implements ScoreRenderer {
     container.innerHTML = ''
 
     try {
-      // verovio 的正确初始化方式：
-      // 1. import('verovio/wasm') 获取 WASM 模块加载器
-      // 2. import('verovio/esm') 获取 VerovioToolkit 构造函数
-      // 3. 调用加载器获取模块实例
-      // 4. 将模块实例传给构造函数
-      
       const [wasmModule, esmModule] = await Promise.all([
         import('verovio/wasm'),
         import('verovio/esm')
       ])
       
-      // 初始化 WASM 模块
       const VerovioModule = await wasmModule.default()
-      
-      // 创建 toolkit 实例
       this.toolkit = new esmModule.VerovioToolkit(VerovioModule)
       
-      // 设置默认选项
+      // 设置选项：
+      // - scale: 降低缩放比例使每行容纳更多小节
+      // - pageWidth: 增加页面宽度
+      // - spacingStaff: 增加谱表间距，避免歌词重叠
+      // - lyricTopMinMargin / lyricSize: 歌词相关间距
       this.toolkit.setOptions({
-        scale: 40,
-        pageWidth: 1200,
+        scale: 28,
+        pageWidth: 2800,
         pageHeight: 1600,
-        spacingStaff: 8,
-        spacingSystem: 8,
-        spacingLinear: 0.2,
-        spacingNonLinear: 0.3,
-        font: 'Leipzig'
+        spacingStaff: 12,
+        spacingSystem: 12,
+        spacingLinear: 0.25,
+        spacingNonLinear: 0.35,
+        minLastSystemSpacing: 12,
+        minSystemDistance: 50,
+        topMarginPng: 50,
+        font: 'Leipzig',
+        adjustPageWidth: false,
+        shrinkToFit: false
       })
       
       console.log('[Verovio] 初始化成功')
@@ -78,20 +78,34 @@ export class VerovioRenderer implements ScoreRenderer {
     try {
       this.container.innerHTML = ''
       
-      // 渲染所有页面
+      // 添加横向滚动支持
+      this.container.style.overflowX = 'auto'
+      this.container.style.overflowY = 'hidden'
+      
       for (let page = 1; page <= this.totalPages; page++) {
         const svg = this.toolkit.renderToSVG(page)
         const pageDiv = document.createElement('div')
         pageDiv.className = 'verovio-page'
         pageDiv.innerHTML = svg
         pageDiv.style.marginBottom = '20px'
+        pageDiv.style.display = 'inline-block'
+        pageDiv.style.minWidth = '100%'
         
-        // 确保 SVG 有正确的尺寸
+        // 调整 SVG 样式
         const svgElement = pageDiv.querySelector('svg')
         if (svgElement) {
           svgElement.style.width = '100%'
           svgElement.style.height = 'auto'
-          svgElement.style.maxWidth = '1200px'
+          svgElement.style.minWidth = '1200px'
+          
+          // 修复歌词重叠：增加歌词行间距
+          const lyricElements = svgElement.querySelectorAll('.lyric, [class*="lyric"]')
+          lyricElements.forEach((el: Element) => {
+            const htmlEl = el as HTMLElement
+            if (htmlEl.style) {
+              htmlEl.style.lineHeight = '1.5'
+            }
+          })
         }
         
         this.container.appendChild(pageDiv)
@@ -116,5 +130,4 @@ export class VerovioRenderer implements ScoreRenderer {
   }
 }
 
-// 注册到工厂
 RendererFactory.register('verovio', () => new VerovioRenderer())
