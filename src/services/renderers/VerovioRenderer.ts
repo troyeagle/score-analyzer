@@ -25,22 +25,36 @@ export class VerovioRenderer implements ScoreRenderer {
       this.toolkit = new esmModule.VerovioToolkit(VerovioModule)
       
       this.toolkit.setOptions({
-        scale: 28,
-        pageWidth: 2800,
+        // 布局控制
+        scale: 28,                    // 缩小音符，容纳更多小节
+        pageWidth: 2800,              // 宽页面
         pageHeight: 1600,
+        measureMinWidth: 15,          // 小节最小宽度（允许紧凑排列）
+        breaks: 'auto',               // 忽略 MusicXML 中的换行标记，自动排版
+        breaksNoWidow: true,          // 避免孤行
+        
+        // 间距控制
         spacingStaff: 12,
         spacingSystem: 12,
         spacingLinear: 0.25,
         spacingNonLinear: 0.35,
         minLastSystemSpacing: 12,
-        minSystemDistance: 50,
-        font: 'Leipzig',
-        adjustPageWidth: false,
-        shrinkToFit: false,
+        minSystemDistance: 30,         // 减小系统间距
+        
+        // 对齐
+        justificationSystem: 1,       // 系统两端对齐
+        justifyVertically: false,
+        
+        // 歌词
         lyricTopMinMargin: 4,
         lyricSize: 4.5,
         lyricVerseCollapse: false,
-        lyricWordSpace: 1.2
+        lyricWordSpace: 1.2,
+        
+        // 其他
+        font: 'Leipzig',
+        adjustPageWidth: false,
+        shrinkToFit: false
       })
       
       console.log('[Verovio] 初始化成功')
