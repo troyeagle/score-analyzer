@@ -57,10 +57,7 @@ export class VerovioRenderer implements ScoreRenderer {
     }
 
     try {
-      // 预处理 MusicXML：根据 lyric 的 number 属性设置不同的 default-y
-      const processedXml = this.preprocessLyrics(xml)
-      
-      const success = this.toolkit.loadData(processedXml)
+      const success = this.toolkit.loadData(xml)
       if (!success) {
         throw new Error('MusicXML 加载失败')
       }
@@ -154,6 +151,74 @@ export class VerovioRenderer implements ScoreRenderer {
     if (!this.toolkit || !this.container) {
       throw new Error('Verovio 未初始化')
     }
+
+    try {
+      this.container.innerHTML = ''
+      
+      // 添加横向滚动支持
+      this.container.style.overflowX = 'auto'
+      this.container.style.overflowY = 'hidden'
+      
+      for (let page = 1; page <= this.totalPages; page++) {
+        const svg = this.toolkit.renderToSVG(page)
+        const pageDiv = document.createElement('div')
+        pageDiv.className = 'verovio-page'
+        pageDiv.innerHTML = svg
+        pageDiv.style.marginBottom = '20px'
+        pageDiv.style.display = 'inline-block'
+        pageDiv.style.minWidth = '100%'
+        
+        // 调整 SVG 样式并修复歌词重叠
+        const svgElement = pageDiv.querySelector('svg')
+        if (svgElement) {
+          svgElement.style.width = '100%'
+          svgElement.style.height = 'auto'
+          svgElement.style.minWidth = '1200px'
+          
+          // 修复多行歌词重叠
+          this.fixLyricOverlap(svgElement)
+        }
+        
+        this.container.appendChild(pageDiv)
+      }
+      
+      console.log(`[Verovio] 渲染完成, 共 ${this.totalPages} 页`)
+    } catch (error) {
+      console.error('[Verovio] 渲染失败:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 修复 SVG 中多行歌词重叠的问题
+   * Verovio 将多行歌词渲染到相同 y 坐标，需要手动偏移
+   */
+  private fixLyricOverlap(svgElement: SVGSVGElement): void {
+    const noteElements = svgElement.querySelectorAll('.note')
+    
+    noteElements.forEach(noteEl => {
+      const verseElements = Array.from(noteEl.querySelectorAll(':scope > .verse'))
+      if (verseElements.length <= 1) return
+      
+      // 获取第一个 verse 的 y 坐标作为基准
+      const firstText = verseElements[0].querySelector('text')
+      if (!firstText) return
+      
+      const baseY = parseFloat(firstText.getAttribute('y') || '0')
+      
+      // 从第 2 个 verse 开始，依次向下偏移
+      for (let i = 1; i < verseElements.length; i++) {
+        const textEl = verseElements[i].querySelector('text')
+        if (textEl) {
+          // 每行歌词偏移 450 单位（根据字体大小和行距调整）
+          const offset = i * 450
+          textEl.setAttribute('y', String(baseY + offset))
+        }
+      }
+    })
+  }
+
+  destroy(): void {
 
     try {
       this.container.innerHTML = ''
