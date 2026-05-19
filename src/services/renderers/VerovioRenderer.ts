@@ -57,7 +57,10 @@ export class VerovioRenderer implements ScoreRenderer {
     }
 
     try {
-      const success = this.toolkit.loadData(xml)
+      // 预处理 MusicXML：根据 lyric 的 number 属性设置不同的 default-y
+      const processedXml = this.preprocessLyrics(xml)
+      
+      const success = this.toolkit.loadData(processedXml)
       if (!success) {
         throw new Error('MusicXML 加载失败')
       }
@@ -67,6 +70,57 @@ export class VerovioRenderer implements ScoreRenderer {
     } catch (error) {
       console.error('[Verovio] MusicXML 加载失败:', error)
       throw error
+    }
+  }
+
+  /**
+   * 预处理 MusicXML 中的歌词
+   * 根据 lyric 的 number 属性（如 part1verse1, part1verse2）设置不同的 default-y
+   * 确保 Verovio 能正确区分多行歌词
+   */
+  private preprocessLyrics(xml: string): string {
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(xml, 'text/xml')
+      
+      // 收集所有不同的 verse 编号
+      const verseNumbers = new Set<string>()
+      const lyricElements = doc.querySelectorAll('lyric')
+      
+      lyricElements.forEach(lyric => {
+        const number = lyric.getAttribute('number')
+        if (number) {
+          verseNumbers.add(number)
+        }
+      })
+      
+      // 如果只有一种或没有 verse，不需要处理
+      if (verseNumbers.size <= 1) {
+        return xml
+      }
+      
+      // 对 verse 编号排序，确定每个 verse 的偏移量
+      const sortedVerses = Array.from(verseNumbers).sort()
+      const verseOffsets = new Map<string, number>()
+      sortedVerses.forEach((verse, index) => {
+        verseOffsets.set(verse, index * 25)  // 每行歌词偏移 25 单位
+      })
+      
+      // 修改每个 lyric 元素的 default-y
+      lyricElements.forEach(lyric => {
+        const number = lyric.getAttribute('number')
+        if (number && verseOffsets.has(number)) {
+          const baseY = -80  // 基础 y 坐标
+          const offset = verseOffsets.get(number)!
+          lyric.setAttribute('default-y', String(baseY - offset))
+        }
+      })
+      
+      const serializer = new XMLSerializer()
+      return serializer.serializeToString(doc)
+    } catch (error) {
+      console.warn('[Verovio] 歌词预处理失败，使用原始 XML:', error)
+      return xml
     }
   }
 
@@ -97,24 +151,6 @@ export class VerovioRenderer implements ScoreRenderer {
           svgElement.style.width = '100%'
           svgElement.style.height = 'auto'
           svgElement.style.minWidth = '1200px'
-          
-          // 修复多行歌词重叠：遍历每个 note 下的多个 verse
-          const noteElements = svgElement.querySelectorAll('.note')
-          noteElements.forEach((noteEl: Element) => {
-            const verseElements = noteEl.querySelectorAll(':scope > .verse')
-            if (verseElements.length <= 1) return
-            
-            // 从第 2 个 verse 开始，向下偏移
-            for (let i = 1; i < verseElements.length; i++) {
-              const verse = verseElements[i]
-              const textEl = verse.querySelector('text')
-              if (textEl) {
-                const currentY = parseFloat(textEl.getAttribute('y') || '0')
-                const offset = i * 450  // 每行歌词偏移 450 单位
-                textEl.setAttribute('y', String(currentY + offset))
-              }
-            }
-          })
         }
         
         this.container.appendChild(pageDiv)
