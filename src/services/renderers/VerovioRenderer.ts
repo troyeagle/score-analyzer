@@ -98,22 +98,20 @@ export class VerovioRenderer implements ScoreRenderer {
           svgElement.style.height = 'auto'
           svgElement.style.minWidth = '1200px'
           
-          // 查找所有歌词元素并调整垂直位置
-          // Verovio 使用 class="lyric" 或 data-name="verse" 等标记歌词
-          const allTextElements = svgElement.querySelectorAll('text')
-          allTextElements.forEach((el: Element) => {
-            const htmlEl = el as SVGTextElement
-            // 检查是否是歌词元素（通常包含 verse 信息）
-            const parent = htmlEl.parentElement
-            if (parent && parent.classList.contains('lyric')) {
-              // 获取当前 y 坐标
-              const currentY = parseFloat(htmlEl.getAttribute('y') || '0')
-              // 检查是否有多个 verse（通过 data-verse 或 transform 属性）
-              const verseAttr = htmlEl.getAttribute('data-verse') || parent.getAttribute('data-verse')
-              if (verseAttr && parseInt(verseAttr) > 1) {
-                // 第二行及以后的歌词向下偏移
-                const offset = (parseInt(verseAttr) - 1) * 15
-                htmlEl.setAttribute('y', String(currentY + offset))
+          // 修复多行歌词重叠：遍历每个 note 下的多个 verse
+          const noteElements = svgElement.querySelectorAll('.note')
+          noteElements.forEach((noteEl: Element) => {
+            const verseElements = noteEl.querySelectorAll(':scope > .verse')
+            if (verseElements.length <= 1) return
+            
+            // 从第 2 个 verse 开始，向下偏移
+            for (let i = 1; i < verseElements.length; i++) {
+              const verse = verseElements[i]
+              const textEl = verse.querySelector('text')
+              if (textEl) {
+                const currentY = parseFloat(textEl.getAttribute('y') || '0')
+                const offset = i * 450  // 每行歌词偏移 450 单位
+                textEl.setAttribute('y', String(currentY + offset))
               }
             }
           })
