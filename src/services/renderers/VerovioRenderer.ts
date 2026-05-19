@@ -23,11 +23,7 @@ export class VerovioRenderer implements ScoreRenderer {
       const VerovioModule = await wasmModule.default()
       this.toolkit = new esmModule.VerovioToolkit(VerovioModule)
       
-      // 设置选项：
-      // - scale: 降低缩放比例使每行容纳更多小节
-      // - pageWidth: 增加页面宽度
-      // - spacingStaff: 增加谱表间距，避免歌词重叠
-      // - lyricTopMinMargin / lyricSize: 歌词相关间距
+      // 设置选项
       this.toolkit.setOptions({
         scale: 28,
         pageWidth: 2800,
@@ -38,10 +34,14 @@ export class VerovioRenderer implements ScoreRenderer {
         spacingNonLinear: 0.35,
         minLastSystemSpacing: 12,
         minSystemDistance: 50,
-        topMarginPng: 50,
         font: 'Leipzig',
         adjustPageWidth: false,
-        shrinkToFit: false
+        shrinkToFit: false,
+        // 歌词相关选项
+        lyricTopMinMargin: 4,      // 歌词上方最小间距
+        lyricSize: 4.5,            // 歌词字号
+        lyricVerseCollapse: false, // 不折叠多行歌词
+        lyricWordSpace: 1.2        // 歌词字间距
       })
       
       console.log('[Verovio] 初始化成功')
@@ -98,12 +98,23 @@ export class VerovioRenderer implements ScoreRenderer {
           svgElement.style.height = 'auto'
           svgElement.style.minWidth = '1200px'
           
-          // 修复歌词重叠：增加歌词行间距
-          const lyricElements = svgElement.querySelectorAll('.lyric, [class*="lyric"]')
-          lyricElements.forEach((el: Element) => {
-            const htmlEl = el as HTMLElement
-            if (htmlEl.style) {
-              htmlEl.style.lineHeight = '1.5'
+          // 查找所有歌词元素并调整垂直位置
+          // Verovio 使用 class="lyric" 或 data-name="verse" 等标记歌词
+          const allTextElements = svgElement.querySelectorAll('text')
+          allTextElements.forEach((el: Element) => {
+            const htmlEl = el as SVGTextElement
+            // 检查是否是歌词元素（通常包含 verse 信息）
+            const parent = htmlEl.parentElement
+            if (parent && parent.classList.contains('lyric')) {
+              // 获取当前 y 坐标
+              const currentY = parseFloat(htmlEl.getAttribute('y') || '0')
+              // 检查是否有多个 verse（通过 data-verse 或 transform 属性）
+              const verseAttr = htmlEl.getAttribute('data-verse') || parent.getAttribute('data-verse')
+              if (verseAttr && parseInt(verseAttr) > 1) {
+                // 第二行及以后的歌词向下偏移
+                const offset = (parseInt(verseAttr) - 1) * 15
+                htmlEl.setAttribute('y', String(currentY + offset))
+              }
             }
           })
         }
