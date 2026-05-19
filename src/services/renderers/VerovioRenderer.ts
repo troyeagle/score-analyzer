@@ -87,15 +87,23 @@ export class VerovioRenderer implements ScoreRenderer {
       const verseNumbers = new Set<string>()
       const lyricElements = doc.querySelectorAll('lyric')
       
+      console.log('[Verovio] 找到 lyric 元素数量:', lyricElements.length)
+      
       lyricElements.forEach(lyric => {
         const number = lyric.getAttribute('number')
+        const defaultY = lyric.getAttribute('default-y')
+        const text = lyric.querySelector('text')?.textContent
+        console.log(`[Verovio] lyric: number=${number}, default-y=${defaultY}, text=${text}`)
         if (number) {
           verseNumbers.add(number)
         }
       })
       
+      console.log('[Verovio] 不同的 verse 编号:', Array.from(verseNumbers))
+      
       // 如果只有一种或没有 verse，不需要处理
       if (verseNumbers.size <= 1) {
+        console.log('[Verovio] 只有一种或没有 verse，跳过预处理')
         return xml
       }
       
@@ -103,8 +111,10 @@ export class VerovioRenderer implements ScoreRenderer {
       const sortedVerses = Array.from(verseNumbers).sort()
       const verseOffsets = new Map<string, number>()
       sortedVerses.forEach((verse, index) => {
-        verseOffsets.set(verse, index * 25)  // 每行歌词偏移 25 单位
+        verseOffsets.set(verse, index * 30)  // 每行歌词偏移 30 单位
       })
+      
+      console.log('[Verovio] verse 偏移量:', Object.fromEntries(verseOffsets))
       
       // 修改每个 lyric 元素的 default-y
       lyricElements.forEach(lyric => {
@@ -112,12 +122,28 @@ export class VerovioRenderer implements ScoreRenderer {
         if (number && verseOffsets.has(number)) {
           const baseY = -80  // 基础 y 坐标
           const offset = verseOffsets.get(number)!
-          lyric.setAttribute('default-y', String(baseY - offset))
+          const newY = baseY - offset
+          lyric.setAttribute('default-y', String(newY))
+          console.log(`[Verovio] 修改 lyric ${number}: default-y=${newY}`)
         }
       })
       
+      // 验证修改结果
+      console.log('[Verovio] 验证修改后的 lyric 元素:')
+      doc.querySelectorAll('lyric').forEach(lyric => {
+        const number = lyric.getAttribute('number')
+        const defaultY = lyric.getAttribute('default-y')
+        const text = lyric.querySelector('text')?.textContent
+        console.log(`[Verovio] 验证: number=${number}, default-y=${defaultY}, text=${text}`)
+      })
+      
       const serializer = new XMLSerializer()
-      return serializer.serializeToString(doc)
+      const result = serializer.serializeToString(doc)
+      
+      // 验证序列化结果
+      console.log('[Verovio] 序列化结果片段:', result.substring(0, 500))
+      
+      return result
     } catch (error) {
       console.warn('[Verovio] 歌词预处理失败，使用原始 XML:', error)
       return xml
@@ -151,6 +177,29 @@ export class VerovioRenderer implements ScoreRenderer {
           svgElement.style.width = '100%'
           svgElement.style.height = 'auto'
           svgElement.style.minWidth = '1200px'
+          
+          // 调试：检查渲染后的歌词位置
+          const noteElements = svgElement.querySelectorAll('.note')
+          console.log(`[Verovio] 渲染后检查: 找到 ${noteElements.length} 个 note 元素`)
+          
+          let checked = 0
+          noteElements.forEach((noteEl: Element) => {
+            if (checked >= 3) return // 只检查前3个
+            
+            const verseElements = noteEl.querySelectorAll(':scope > .verse')
+            if (verseElements.length > 1) {
+              console.log(`[Verovio] 发现多歌词 note, verse 数量: ${verseElements.length}`)
+              verseElements.forEach((verse, i) => {
+                const textEl = verse.querySelector('text')
+                if (textEl) {
+                  const y = textEl.getAttribute('y')
+                  const text = textEl.textContent
+                  console.log(`[Verovio]   verse ${i}: y=${y}, text=${text}`)
+                }
+              })
+              checked++
+            }
+          })
         }
         
         this.container.appendChild(pageDiv)
